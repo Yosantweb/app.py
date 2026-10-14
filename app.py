@@ -4,16 +4,31 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-# Configuración de la página
+# Configuración de la página (eliminando elementos visuales infantiles y dando aspecto corporativo)
 st.set_page_config(
-    page_title="Proyección y Control de Demanda - Acueducto",
+    page_title="Control Operativo - Aguas de Cartagena",
     page_icon="💧",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-st.title("💧 Sistema Inteligente de Proyección y Control de Tanques")
+# Estilo corporativo sobrio (oculta menús innecesarios de Streamlit y personaliza fuentes)
 st.markdown(
-    "Monitoreo operativo de niveles, validación de bandas de caudal según almacenamiento a las 06:00 a.m. y curva de recuperación."
+    """
+    <style>
+        .reportview-container { background: #f0f2f6; }
+        .sidebar .sidebar-content { background: #f8f9fa; }
+        h1, h2, h3 { color: #0b3c5d; }
+    </style>
+""",
+    unsafe_allow_html=True,
+)
+
+st.title(
+    "💧 Sistema de Control y Proyección de Niveles — Aguas de Cartagena S.A. E.S.P."
+)
+st.markdown(
+    "Monitoreo de tanques estratégicos, validación de bandas de caudal según almacenamiento a las 06:00 a.m. y control de cumplimiento operativo."
 )
 
 # ---------------------------------------------------------
@@ -30,12 +45,12 @@ CAPACIDADES_TANQUES = {
 }
 
 VOLUMEN_TOTAL_SISTEMA = sum(CAPACIDADES_TANQUES.values())
-META_AMANECER_PCT = 75.0  # Meta objetivo estricta
+META_AMANECER_PCT = 75.0  # Regla de oro: 75% a las 06:00 a.m.
 
 # Horas del día (00:00 a 23:00)
 horas_dia = list(range(24))
 
-# Curvas de referencia base (Ideal, Caudal Mínimo, Caudal Promedio/Objetivo, Caudal Máximo)
+# Curvas de referencia base del sistema (Ideal y Bandas de Caudal)
 almacenamiento_ideal_ref = [
     75,
     78,
@@ -150,65 +165,87 @@ df_curva_base = pd.DataFrame({
 })
 
 # ---------------------------------------------------------
-# 2. PANEL LATERAL: ENTRADA DE DATOS OPERATIVOS
+# 2. PANEL LATERAL: CONFIGURACIÓN GENERAL DEL TURNO
 # ---------------------------------------------------------
-st.sidebar.header("🎛️ Panel de Control Operativo")
+st.sidebar.header("🎛️ Parámetros del Turno")
 
-# 1. Dato clave exigido: Almacenamiento real a las 06:00 a.m.
-st.sidebar.subheader("🌅 Validación Matutina (06:00 a.m.)")
+# Validación Matutina Obligatoria
+st.sidebar.subheader("🌅 Condición a las 06:00 a.m.")
 almacenamiento_06am_pct = st.sidebar.number_input(
-    "% Almacenamiento real a las 06:00 a.m.",
+    "% Almacenamiento real (06:00 a.m.)",
     min_value=0.0,
     max_value=100.0,
     value=72.0,
     step=0.5,
-    help="Porcentaje de almacenamiento con el que amaneció el sistema hoy.",
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("⏱️ Monitoreo Turno Actual")
+st.sidebar.subheader("⏱️ Hora de Consulta Actual")
 hora_actual = st.sidebar.selectbox(
-    "Seleccione la Hora Actual de Corte", options=horas_dia, index=8
+    "Seleccione la hora del turno a registrar", options=horas_dia, index=8
 )
+
+# ---------------------------------------------------------
+# 3. MÓDULO DE ACTUALIZACIÓN DE NIVELES POR HORA
+# ---------------------------------------------------------
+st.subheader(
+    f"📥 Registro de Niveles y Caudal — Hora de Corte: {hora_actual:02d}:00 hrs"
+)
+st.markdown(
+    "Ingrese los niveles actuales reportados por telemetría/SCADA para cada tanque en esta hora específica y el caudal de distribución real:"
+)
+
+col_ingreso1, col_ingreso2 = st.columns([2, 1])
 
 niveles_actuales_ingresados = {}
-for tanque, cap_max in CAPACIDADES_TANQUES.items():
-    val_def = (
-        df_curva_base[df_curva_base["Hora"] == hora_actual][
-            "Almacenamiento_Ideal_Pct"
-        ].values[0]
-        / 100.0
-        * cap_max
-        * 0.9
-    )
-    niveles_actuales_ingresados[tanque] = st.sidebar.number_input(
-        f"{tanque} (m³)",
+
+with col_ingreso1:
+    st.markdown("##### 📏 Niveles por Tanque (m³)")
+    # Creamos columnas internas para que la entrada de tanques sea limpia
+    t_cols = st.columns(2)
+    idx = 0
+    for tanque, cap_max in CAPACIDADES_TANQUES.items():
+        val_sugerido = (
+            df_curva_base[df_curva_base["Hora"] == hora_actual][
+                "Almacenamiento_Ideal_Pct"
+            ].values[0]
+            / 100.0
+            * cap_max
+            * 0.9
+        )
+        with t_cols[idx % 2]:
+            niveles_actuales_ingresados[tanque] = st.number_input(
+                f"{tanque.replace('Nivel_', '')} (Max: {cap_max:,.0f} m³)",
+                min_value=0.0,
+                max_value=cap_max * 1.2,
+                value=float(val_sugerido),
+                step=50.0,
+            )
+        idx += 1
+
+with col_ingreso2:
+    st.markdown("##### ⚡ Operación de Red")
+    caudal_distribucion_actual = st.number_input(
+        "Caudal Distribución Real (L/s)",
         min_value=0.0,
-        max_value=cap_max * 1.2,
-        value=float(val_def),
-        step=100.0,
+        max_value=200.0,
+        value=85.0,
+        step=1.0,
+    )
+    st.info(
+        "💡 El caudal ingresado se comparará en tiempo real con las bandas operativas ajustadas al amanecer."
     )
 
-caudal_distribucion_actual = st.sidebar.number_input(
-    "Caudal de Distribución Real Actual (L/s)",
-    min_value=0.0,
-    max_value=200.0,
-    value=88.0,
-)
-
 # ---------------------------------------------------------
-# 3. LÓGICA DE FACTOR DE AJUSTE SEGÚN LAS 06:00 AM
+# 4. LÓGICA Y CÁLCULOS TÉCNICOS
 # ---------------------------------------------------------
-# Si amaneció por debajo del 75%, calculamos un factor restrictivo de caudal (< 1.0)
-# para obligar a la red a restringir caudal y recuperar nivel.
+# Factor de ajuste según el almacenamiento a las 06:00 a.m.
 factor_condicion_matutina = 1.0
 if almacenamiento_06am_pct < META_AMANECER_PCT:
-    # Factor proporcional al déficit matutino
     factor_condicion_matutina = max(
         0.75, almacenamiento_06am_pct / META_AMANECER_PCT
     )
 
-# Aplicar el factor a las bandas de caudal objetivo del día
 df_curva_base["Caudal_Min_Ajustado"] = (
     df_curva_base["Caudal_Min"] * factor_condicion_matutina
 )
@@ -219,35 +256,32 @@ df_curva_base["Caudal_Max_Ajustado"] = (
     df_curva_base["Caudal_Max"] * factor_condicion_matutina
 )
 
-# Extraer los rangos teóricos ajustados para la hora actual
 fila_ref = df_curva_base[df_curva_base["Hora"] == hora_actual].iloc[0]
 c_min_permitido = fila_ref["Caudal_Min_Ajustado"]
 c_max_permitido = fila_ref["Caudal_Max_Ajustado"]
-c_obj_esperado = fila_ref["Caudal_Prom_Ajustado"]
 
-# Validar si el caudal actual está dentro del rango permitido
 caudal_en_rango = (c_min_permitido <= caudal_distribucion_actual) and (
     caudal_distribucion_actual <= c_max_permitido
 )
 
-# Cálculos de volumen actual
 volumen_almacenado_actual = sum(niveles_actuales_ingresados.values())
 pct_almacenamiento_actual = (
     volumen_almacenado_actual / VOLUMEN_TOTAL_SISTEMA
 ) * 100.0
 
 # ---------------------------------------------------------
-# 4. DASHBOARD EJECUTIVO PRINCIPAL
+# 5. TABLERO DE CONTROL EJECUTIVO (KPIs)
 # ---------------------------------------------------------
+st.divider()
 st.subheader(
-    f"📊 Tablero de Control y Validación — Corte Hora: {hora_actual:02d}:00 hrs"
+    f"📊 Indicadores de Gestión del Sistema — Corte {hora_actual:02d}:00 hrs"
 )
 
-col1, col2, col3, col4 = st.columns(4)
+kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 
-with col1:
+with kpi1:
     st.metric(
-        label="🌅 Almacenamiento a las 06:00 a.m.",
+        label="🌅 Almacenamiento 06:00 a.m.",
         value=f"{almacenamiento_06am_pct:.1f}%",
         delta=(
             "Cumple Meta (≥ 75%)"
@@ -261,92 +295,74 @@ with col1:
         ),
     )
 
-with col2:
+with kpi2:
     st.metric(
         label="💧 Almacenamiento Actual",
         value=f"{pct_almacenamiento_actual:.1f}%",
         delta=f"Volumen: {volumen_almacenado_actual:,.0f} m³",
     )
 
-with col3:
-    estado_caudal_txt = (
-        "🟢 Dentro de Rango" if caudal_en_rango else "🔴 Fuera de Rango"
-    )
+with kpi3:
     st.metric(
-        label="⚡ Caudal de Distribución Actual",
+        label="⚡ Caudal Operando",
         value=f"{caudal_distribucion_actual:.1f} L/s",
         delta=f"Rango: [{c_min_permitido:.1f} - {c_max_permitido:.1f}] L/s",
         delta_value="normal" if caudal_en_rango else "inverse",
     )
 
-with col4:
+with kpi4:
     if almacenamiento_06am_pct >= META_AMANECER_PCT and caudal_en_rango:
-        st.metric(label="Estado Operativo", value="🟢 Operación Normal")
+        st.metric(label="Estado Operativo", value="🟢 Normal / Seguro")
     else:
-        st.metric(label="Estado Operativo", value="🟠 Requiere Restricción")
+        st.metric(label="Estado Operativo", value="🟠 Requiere Ajuste")
 
+# ---------------------------------------------------------
+# 6. GRÁFICO DE CONTROL DE CAUDAL Y COMPARACIÓN
+# ---------------------------------------------------------
 st.divider()
-
-# ---------------------------------------------------------
-# 5. ANÁLISIS DE RANGOS Y ALERTA DE CAUDAL
-# ---------------------------------------------------------
-if not caudal_en_rango:
-    if caudal_distribucion_actual > c_max_permitido:
-        st.error(
-            f"⚠️ **Alerta de Sobredistribución:** El caudal actual ({caudal_distribucion_actual} L/s) está **por encima del límite máximo permitido ({c_max_permitido:.1f} L/s)** "
-            f"para las condiciones de almacenamiento de hoy. Debes reducir la apertura de válvulas para evitar vaciamiento crítico."
-        )
-    else:
-        st.info(
-            f"ℹ️ **Subdistribución:** El caudal actual ({caudal_distribucion_actual} L/s) está por debajo del mínimo de la banda ({c_min_permitido:.1f} L/s)."
-        )
-else:
-    st.success(
-        "✅ El caudal de distribución actual se encuentra perfectamente dentro de la banda operativa recomendada según el balance matutino."
-    )
-
-# ---------------------------------------------------------
-# 6. GRÁFICO DE BANDAS DE CAUDAL Y CURVA OBJETIVO
-# ---------------------------------------------------------
 st.subheader(
-    "📈 Bandas Operativas de Caudal (Ajustadas por la Condición de las 06:00 a.m.)"
+    "📈 Validación de Caudal Real vs. Bandas Operativas del Día (Ajustadas)"
 )
 
 fig = go.Figure()
 
-# Banda sombreada de operación permitida (Min - Max)
+# Banda operativa permitida
 fig.add_trace(
     go.Scatter(
         x=horas_dia + horas_dia[::-1],
         y=list(df_curva_base["Caudal_Max_Ajustado"])
         + list(df_curva_base["Caudal_Min_Ajustado"])[::-1],
         fill="toself",
-        fillcolor="rgba(0, 100, 255, 0.15)",
+        fillcolor="rgba(11, 60, 93, 0.1)",
         line=dict(color="rgba(255,255,255,0)"),
         name="Banda Operativa Permitida",
     )
 )
 
-# Línea del caudal objetivo ajustado
+# Caudal objetivo
 fig.add_trace(
     go.Scatter(
         x=df_curva_base["Hora"],
         y=df_curva_base["Caudal_Prom_Ajustado"],
-        mode="lines+markers",
-        name="Caudal Objetivo Ajustado (L/s)",
-        line=dict(color="blue", width=2),
+        mode="lines",
+        name="Caudal Objetivo (Promedio)",
+        line=dict(color="#0b3c5d", width=2, dash="dash"),
     )
 )
 
-# Punto de la hora actual real
+# Punto registrado por el operador en la hora actual
 fig.add_trace(
     go.Scatter(
         x=[hora_actual],
         y=[caudal_distribucion_actual],
-        mode="markers",
-        name="Caudal Real Operando",
+        mode="markers+text",
+        name="Caudal Registrado (Turno)",
+        text=[f"{caudal_distribucion_actual} L/s"],
+        textposition="top center",
         marker=dict(
-            color="red" if not caudal_en_rango else "green", size=14, symbol="star"
+            color="#2ecc71" if caudal_en_rango else "#e74c3c",
+            size=16,
+            symbol="diamond",
         ),
     )
 )
@@ -355,27 +371,29 @@ fig.update_layout(
     xaxis_title="Hora del Día (Hrs)",
     yaxis_title="Caudal de Distribución (L/s)",
     template="plotly_white",
+    legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
 )
 st.plotly_chart(fig, use_container_width=True)
 
 # ---------------------------------------------------------
-# 7. TABLA DE CONSIGNAS HORARIAS
+# 7. RESUMEN DETALLADO POR TANQUE
 # ---------------------------------------------------------
-st.subheader("📋 Consignas de Caudal Permitido para el Resto del Día")
+st.subheader("📋 Estado Detallado por Estación de Tanques")
+df_resumen_tanques = pd.DataFrame({
+    "Estación / Tanque": list(CAPACIDADES_TANQUES.keys()),
+    "Capacidad Máxima (m³)": list(CAPACIDADES_TANQUES.values()),
+    "Volumen Registrado (m³)": list(niveles_actuales_ingresados.values()),
+})
+df_resumen_tanques["% Oкупación"] = (
+    df_resumen_tanques["Volumen Registrado (m³)"]
+    / df_resumen_tanques["Capacidad Máxima (m³)"]
+) * 100.0
+
 st.dataframe(
-    df_curva_base[df_curva_base["Hora"] >= hora_actual][
-        [
-            "Hora",
-            "Caudal_Min_Ajustado",
-            "Caudal_Prom_Ajustado",
-            "Caudal_Max_Ajustado",
-        ]
-    ].rename(
-        columns={
-            "Caudal_Min_Ajustado": "Caudal Mínimo (L/s)",
-            "Caudal_Prom_Ajustado": "Caudal Objetivo (L/s)",
-            "Caudal_Max_Ajustado": "Caudal Máximo (L/s)",
-        }
-    ),
+    df_resumen_tanques.style.format({
+        "Capacidad Máxima (m³)": "{:,.1f}",
+        "Volumen Registrado (m³)": "{:,.1f}",
+        "% Oкупación": "{:.1f}%",
+    }),
     use_container_width=True,
 )
