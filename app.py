@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-# Configuración de la página (eliminando elementos visuales infantiles y dando aspecto corporativo)
+# Configuración de la página
 st.set_page_config(
     page_title="Control Operativo - Aguas de Cartagena",
     page_icon="💧",
@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Estilo corporativo sobrio (oculta menús innecesarios de Streamlit y personaliza fuentes)
+# Estilo corporativo sobrio
 st.markdown(
     """
     <style>
@@ -28,23 +28,35 @@ st.title(
     "💧 Sistema de Control y Proyección de Niveles — Aguas de Cartagena S.A. E.S.P."
 )
 st.markdown(
-    "Monitoreo de tanques estratégicos, validación de bandas de caudal según almacenamiento a las 06:00 a.m. y control de cumplimiento operativo."
+    "Monitoreo de tanques estratégicos en centímetros, validación de bandas de caudal según almacenamiento a las 06:00 a.m. y control operativo."
 )
 
 # ---------------------------------------------------------
-# 1. CONFIGURACIÓN DE TANQUES Y CAPACIDADES
+# 1. CONFIGURACIÓN DE TANQUES Y NIVELES MÁXIMOS (en centímetros)
 # ---------------------------------------------------------
-CAPACIDADES_TANQUES = {
-    "Nivel_Colinas": 18000.0,
-    "Nivel_Carmelo": 4500.0,
-    "Nivel_Tk1_Planta": 4000.0,
-    "Nivel_Tk2_Planta": 4000.0,
-    "Nivel_TkNar2": 5000.0,
-    "Nivel_SuccionA_TkColinas": 2500.0,
-    "Nivel_Tk_Lomas": 3500.0,
+# Basado en las capacidades/alturas máximas operativas habituales de la red
+ALTURAS_MAXIMAS_TANQUES = {
+    "Nivel_Colinas": 450.0,  # cm
+    "Nivel_Carmelo": 400.0,  # cm
+    "Nivel_Tk1_Planta": 300.0,  # cm
+    "Nivel_Tk2_Planta": 300.0,  # cm
+    "Nivel_TkNar2": 500.0,  # cm
+    "Nivel_SuccionA_TkColinas": 350.0,  # cm
+    "Nivel_Tk_Lomas": 400.0,  # cm
 }
 
-VOLUMEN_TOTAL_SISTEMA = sum(CAPACIDADES_TANQUES.values())
+# Pesos o capacidades relativas para estimar el porcentaje global del sistema a partir de los niveles en cm
+# (Equivalente al consolidado de almacenamiento)
+FACTORES_PONDERACION = {
+    "Nivel_Colinas": 0.40,
+    "Nivel_Carmelo": 0.15,
+    "Nivel_Tk1_Planta": 0.10,
+    "Nivel_Tk2_Planta": 0.10,
+    "Nivel_TkNar2": 0.15,
+    "Nivel_SuccionA_TkColinas": 0.05,
+    "Nivel_Tk_Lomas": 0.05,
+}
+
 META_AMANECER_PCT = 75.0  # Regla de oro: 75% a las 06:00 a.m.
 
 # Horas del día (00:00 a 23:00)
@@ -186,40 +198,40 @@ hora_actual = st.sidebar.selectbox(
 )
 
 # ---------------------------------------------------------
-# 3. MÓDULO DE ACTUALIZACIÓN DE NIVELES POR HORA
+# 3. MÓDULO DE ACTUALIZACIÓN DE NIVELES EN CENTÍMETROS POR HORA
 # ---------------------------------------------------------
 st.subheader(
-    f"📥 Registro de Niveles y Caudal — Hora de Corte: {hora_actual:02d}:00 hrs"
+    f"📥 Registro de Niveles (cm) y Caudal — Hora de Corte: {hora_actual:02d}:00 hrs"
 )
 st.markdown(
-    "Ingrese los niveles actuales reportados por telemetría/SCADA para cada tanque en esta hora específica y el caudal de distribución real:"
+    "Ingrese los niveles leídos en pantalla en **centímetros (cm)** para cada tanque y el caudal de distribución real:"
 )
 
 col_ingreso1, col_ingreso2 = st.columns([2, 1])
 
-niveles_actuales_ingresados = {}
+niveles_cm_ingresados = {}
 
 with col_ingreso1:
-    st.markdown("##### 📏 Niveles por Tanque (m³)")
-    # Creamos columnas internas para que la entrada de tanques sea limpia
+    st.markdown("##### 📏 Lectura de Niveles en Tanques (cm)")
     t_cols = st.columns(2)
     idx = 0
-    for tanque, cap_max in CAPACIDADES_TANQUES.items():
-        val_sugerido = (
+    for tanque, alt_max in ALTURAS_MAXIMAS_TANQUES.items():
+        # Valor sugerido basado en la curva ideal teórica convertida a cm
+        pct_sugerido = (
             df_curva_base[df_curva_base["Hora"] == hora_actual][
                 "Almacenamiento_Ideal_Pct"
             ].values[0]
             / 100.0
-            * cap_max
-            * 0.9
         )
+        val_cm_sugerido = alt_max * pct_sugerido * 0.9
+
         with t_cols[idx % 2]:
-            niveles_actuales_ingresados[tanque] = st.number_input(
-                f"{tanque.replace('Nivel_', '')} (Max: {cap_max:,.0f} m³)",
+            niveles_cm_ingresados[tanque] = st.number_input(
+                f"{tanque.replace('Nivel_', '')} (Máx: {alt_max:,.0f} cm)",
                 min_value=0.0,
-                max_value=cap_max * 1.2,
-                value=float(val_sugerido),
-                step=50.0,
+                max_value=alt_max * 1.1,
+                value=float(val_cm_sugerido),
+                step=1.0,
             )
         idx += 1
 
@@ -233,12 +245,21 @@ with col_ingreso2:
         step=1.0,
     )
     st.info(
-        "💡 El caudal ingresado se comparará en tiempo real con las bandas operativas ajustadas al amanecer."
+        "💡 El caudal se evalúa frente a los rangos permitidos según el almacenamiento matutino."
     )
 
 # ---------------------------------------------------------
-# 4. LÓGICA Y CÁLCULOS TÉCNICOS
+# 4. LÓGICA Y CÁLCULOS TÉCNICOS (CONVERSIÓN DE CM A %)
 # ---------------------------------------------------------
+# Calcular el porcentaje de almacenamiento global ponderado a partir de los centímetros de cada tanque
+pct_almacenamiento_actual = 0.0
+for tanque, cm_val in niveles_cm_ingresados.items():
+    alt_max = ALTURAS_MAXIMAS_TANQUES[tanque]
+    peso = FACTORES_PONDERACION[tanque]
+    # Ocupación fraccional del tanque
+    fraccion_tanque = min(1.0, cm_val / alt_max)
+    pct_almacenamiento_actual += fraccion_tanque * peso * 100.0
+
 # Factor de ajuste según el almacenamiento a las 06:00 a.m.
 factor_condicion_matutina = 1.0
 if almacenamiento_06am_pct < META_AMANECER_PCT:
@@ -264,11 +285,6 @@ caudal_en_rango = (c_min_permitido <= caudal_distribucion_actual) and (
     caudal_distribucion_actual <= c_max_permitido
 )
 
-volumen_almacenado_actual = sum(niveles_actuales_ingresados.values())
-pct_almacenamiento_actual = (
-    volumen_almacenado_actual / VOLUMEN_TOTAL_SISTEMA
-) * 100.0
-
 # ---------------------------------------------------------
 # 5. TABLERO DE CONTROL EJECUTIVO (KPIs)
 # ---------------------------------------------------------
@@ -280,41 +296,42 @@ st.subheader(
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 
 with kpi1:
+    delta_am_txt = (
+        "Cumple Meta (≥ 75%)"
+        if almacenamiento_06am_pct >= META_AMANECER_PCT
+        else "Déficit Matutino"
+    )
+    col_am = "normal" if almacenamiento_06am_pct >= META_AMANECER_PCT else "inverse"
     st.metric(
         label="🌅 Almacenamiento 06:00 a.m.",
         value=f"{almacenamiento_06am_pct:.1f}%",
-        delta=(
-            "Cumple Meta (≥ 75%)"
-            if almacenamiento_06am_pct >= META_AMANECER_PCT
-            else "Déficit Matutino"
-        ),
-        delta_value=(
-            "normal"
-            if almacenamiento_06am_pct >= META_AMANECER_PCT
-            else "inverse"
-        ),
+        delta=delta_am_txt,
+        delta_color=col_am,
     )
 
 with kpi2:
     st.metric(
-        label="💧 Almacenamiento Actual",
+        label="💧 Almacenamiento Sistema",
         value=f"{pct_almacenamiento_actual:.1f}%",
-        delta=f"Volumen: {volumen_almacenado_actual:,.0f} m³",
+        delta="Calculado por Niveles (cm)",
     )
 
 with kpi3:
+    col_cau = "normal" if caudal_en_rango else "inverse"
     st.metric(
         label="⚡ Caudal Operando",
         value=f"{caudal_distribucion_actual:.1f} L/s",
         delta=f"Rango: [{c_min_permitido:.1f} - {c_max_permitido:.1f}] L/s",
-        delta_value="normal" if caudal_en_rango else "inverse",
+        delta_color=col_cau,
     )
 
 with kpi4:
-    if almacenamiento_06am_pct >= META_AMANECER_PCT and caudal_en_rango:
-        st.metric(label="Estado Operativo", value="🟢 Normal / Seguro")
-    else:
-        st.metric(label="Estado Operativo", value="🟠 Requiere Ajuste")
+    estado_op = (
+        "🟢 Normal / Seguro"
+        if (almacenamiento_06am_pct >= META_AMANECER_PCT and caudal_en_rango)
+        else "🟠 Requiere Ajuste"
+    )
+    st.metric(label="Estado Operativo", value=estado_op)
 
 # ---------------------------------------------------------
 # 6. GRÁFICO DE CONTROL DE CAUDAL Y COMPARACIÓN
@@ -376,24 +393,24 @@ fig.update_layout(
 st.plotly_chart(fig, use_container_width=True)
 
 # ---------------------------------------------------------
-# 7. RESUMEN DETALLADO POR TANQUE
+# 7. RESUMEN DETALLADO POR TANQUE (EN CM)
 # ---------------------------------------------------------
-st.subheader("📋 Estado Detallado por Estación de Tanques")
+st.subheader("📋 Estado Detallado por Estación de Tanques (Niveles en cm)")
 df_resumen_tanques = pd.DataFrame({
-    "Estación / Tanque": list(CAPACIDADES_TANQUES.keys()),
-    "Capacidad Máxima (m³)": list(CAPACIDADES_TANQUES.values()),
-    "Volumen Registrado (m³)": list(niveles_actuales_ingresados.values()),
+    "Estación / Tanque": list(ALTURAS_MAXIMAS_TANQUES.keys()),
+    "Altura Máxima (cm)": list(ALTURAS_MAXIMAS_TANQUES.values()),
+    "Nivel Registrado (cm)": list(niveles_cm_ingresados.values()),
 })
-df_resumen_tanques["% Oкупación"] = (
-    df_resumen_tanques["Volumen Registrado (m³)"]
-    / df_resumen_tanques["Capacidad Máxima (m³)"]
+df_resumen_tanques["% Ocupación"] = (
+    df_resumen_tanques["Nivel Registrado (cm)"]
+    / df_resumen_tanques["Altura Máxima (cm)"]
 ) * 100.0
 
 st.dataframe(
     df_resumen_tanques.style.format({
-        "Capacidad Máxima (m³)": "{:,.1f}",
-        "Volumen Registrado (m³)": "{:,.1f}",
-        "% Oкупación": "{:.1f}%",
+        "Altura Máxima (cm)": "{:,.1f}",
+        "Nivel Registrado (cm)": "{:,.1f}",
+        "% Ocupación": "{:.1f}%",
     }),
     use_container_width=True,
 )
