@@ -29,7 +29,7 @@ st.title(
     "💧 Sistema de Control, Históricos y Proyección — Aguas de Cartagena S.A. E.S.P."
 )
 st.markdown(
-    "Monitoreo de tanques en centímetros (desde 0 cm), validación de bandas de caudal en **$m^3/h$** (hasta 20,000 m³/h), almacenamiento histórico y contraste frente a metas."
+    "Monitoreo de tanques en centímetros, bandas de caudal en **$m^3/h$**, trazabilidad de tendencia real y proyección operativa."
 )
 
 # ---------------------------------------------------------
@@ -214,7 +214,6 @@ almacenamiento_06am_pct = st.sidebar.number_input(
     max_value=100.0,
     value=72.0,
     step=0.5,
-    help="Porcentaje de almacenamiento con el que amaneció el sistema a las 06:00 a.m.",
 )
 
 st.sidebar.markdown("---")
@@ -248,7 +247,6 @@ with col_ingreso1:
         val_cm_sugerido = alt_max * pct_sugerido * 0.9
 
         with t_cols[idx % 2]:
-            # min_value ajustado estrictamente a 0.0 para permitir registrar tanques vacíos o en cero
             niveles_cm_ingresados[tanque] = st.number_input(
                 f"{tanque.replace('Nivel_', '')} (Máx: {alt_max:,.0f} cm)",
                 min_value=0.0,
@@ -385,19 +383,26 @@ with kpi4:
     )
 
 # ---------------------------------------------------------
-# 7. DASHBOARD GRÁFICO DE CONTRASTE
+# 7. DASHBOARD GRÁFICO: LÍNEAS DE TENDENCIA Y PROYECCIÓN
 # ---------------------------------------------------------
 st.divider()
-st.subheader("📈 Dashboard Gráfico: Contraste Meta vs. Real")
+st.subheader(
+    "📈 Dashboard Gráfico: Tendencia Operativa, Contraste y Proyección del Día"
+)
 
 tab_g1, tab_g2, tab_g3 = st.tabs([
-    "⚡ Contraste de Caudal",
-    "💧 Almacenamiento Global",
-    "📊 Histórico Operativo Consultado",
+    "⚡ Tendencia y Proyección de Caudal",
+    "💧 Tendencia y Proyección de Almacenamiento",
+    "📊 Histórico Operativo del Día",
 ])
+
+# Cargar histórico actual para la fecha seleccionada
+df_hist_global = cargar_historico()
+df_dia_actual = df_hist_global[df_hist_global["Fecha"] == str(fecha_actual)]
 
 with tab_g1:
     fig_c = go.Figure()
+    # 1. Banda permitida
     fig_c.add_trace(
         go.Scatter(
             x=horas_dia + horas_dia[::-1],
@@ -409,59 +414,156 @@ with tab_g1:
             name="Banda Permitida",
         )
     )
+    # 2. Curva objetivo
     fig_c.add_trace(
         go.Scatter(
             x=df_curva_base["Hora"],
             y=df_curva_base["Caudal_Prom_Ajustado"],
             mode="lines",
-            name="Caudal Objetivo",
+            name="Caudal Objetivo (Meta)",
             line=dict(color="#0b3c5d", width=2, dash="dash"),
         )
     )
-    fig_c.add_trace(
-        go.Scatter(
-            x=[hora_actual],
-            y=[caudal_distribucion_actual],
-            mode="markers+text",
-            name="Caudal Real Operando",
-            text=[f"{caudal_distribucion_actual:,.0f} m³/h"],
-            textposition="top center",
-            marker=dict(
-                color="#2ecc71" if caudal_en_rango else "#e74c3c",
-                size=16,
-                symbol="diamond",
-            ),
+
+    # Si hay datos históricos guardados en el día, dibujamos la línea real transcurrida
+    if not df_dia_actual.empty:
+        # Ordenar por hora
+        df_dia_ordenado = df_dia_actual.copy()
+        df_dia_ordenado["Hora_Int"] = df_dia_ordenado["Hora"].apply(
+            lambda x: int(x.split(":")[0])
         )
-    )
+        df_dia_ordenado = df_dia_ordenado.sort_values("Hora_Int")
+
+        fig_c.add_trace(
+            go.Scatter(
+                x=df_dia_ordenado["Hora_Int"],
+                y=df_dia_ordenado["Caudal_Real_m3h"],
+                mode="lines+markers",
+                name="Tendencia Real Transcurrida",
+                line=dict(color="#27ae60", width=3),
+                marker=dict(size=8),
+            )
+        )
+
+        # Proyección para el resto del día basada en el último dato registrado o actual
+        ultima_hora_reg = df_dia_ordenado["Hora_Int"].max()
+        if ultima_hora_reg < 23:
+            horas_proy = list(
+                range(int(ultima_hora_reg), 24)
+            )  # Conectar desde el último punto
+            ultimo_caudal = df_dia_ordenado[
+                df_dia_ordenado["Hora_Int"] == ultima_hora_reg
+            ]["Caudal_Real_m3h"].values[0]
+            # Curva de proyección estimada hacia el objetivo del resto del día
+            val_meta_final = df_curva_base[df_curva_base["Hora"] == 23][
+                "Caudal_Prom_Ajustado"
+            ].values[0]
+            caudales_proyectados = np.linspace(
+                ultimo_caudal, val_meta_final, len(horas_proy)
+            )
+
+            fig_c.add_trace(
+                go.Scatter(
+                    x=horas_proy,
+                    y=caudales_proyectados,
+                    mode="lines",
+                    name="Proyección Resto del Día",
+                    line=dict(color="#e67e22", width=3, dash="dot"),
+                )
+            )
+    else:
+        # Si no hay registros guardados aún, mostramos el punto actual interactivo
+        fig_c.add_trace(
+            go.Scatter(
+                x=[hora_actual],
+                y=[caudal_distribucion_actual],
+                mode="markers+text",
+                name="Caudal Operando (Actual)",
+                text=[f"{caudal_distribucion_actual:,.0f} m³/h"],
+                textposition="top center",
+                marker=dict(
+                    color="#2ecc71" if caudal_en_rango else "#e74c3c",
+                    size=14,
+                    symbol="diamond",
+                ),
+            )
+        )
+
     fig_c.update_layout(
         xaxis_title="Hora del Día",
         yaxis_title="Caudal (m³/h)",
         template="plotly_white",
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
     )
     st.plotly_chart(fig_c, use_container_width=True)
 
 with tab_g2:
     fig_s = go.Figure()
+    # Curva meta de almacenamiento
     fig_s.add_trace(
         go.Scatter(
             x=df_curva_base["Hora"],
             y=df_curva_base["Almacenamiento_Ideal_Pct"],
-            mode="lines+markers",
+            mode="lines",
             name="Curva Meta Almacenamiento (%)",
             line=dict(color="#2980b9", width=3),
         )
     )
-    fig_s.add_trace(
-        go.Scatter(
-            x=[hora_actual],
-            y=[pct_almacenamiento_actual],
-            mode="markers+text",
-            name="Almacenamiento Real Actual",
-            text=[f"{pct_almacenamiento_actual:.1f}%"],
-            textposition="top center",
-            marker=dict(color="#e67e22", size=16, symbol="star"),
+
+    if not df_dia_actual.empty:
+        df_dia_ordenado = df_dia_actual.copy()
+        df_dia_ordenado["Hora_Int"] = df_dia_ordenado["Hora"].apply(
+            lambda x: int(x.split(":")[0])
         )
-    )
+        df_dia_ordenado = df_dia_ordenado.sort_values("Hora_Int")
+
+        # Línea continua real transcurrida
+        fig_s.add_trace(
+            go.Scatter(
+                x=df_dia_ordenado["Hora_Int"],
+                y=df_dia_ordenado["Almacenamiento_Sistema_Pct"],
+                mode="lines+markers",
+                name="Almacenamiento Real Transcurrido",
+                line=dict(color="#27ae60", width=3),
+                marker=dict(size=8),
+            )
+        )
+
+        # Proyección de almacenamiento para el resto del día hacia la meta del amanecer siguiente (75%)
+        ultima_hora_reg = df_dia_ordenado["Hora_Int"].max()
+        if ultima_hora_reg < 23:
+            horas_proy = list(range(int(ultima_hora_reg), 24))
+            ultimo_alm = df_dia_ordenado[
+                df_dia_ordenado["Hora_Int"] == ultima_hora_reg
+            ]["Almacenamiento_Sistema_Pct"].values[0]
+            meta_final_dia = 75.0  # Meta del siguiente amanecer
+
+            almacenamientos_proyectados = np.linspace(
+                ultimo_alm, meta_final_dia, len(horas_proy)
+            )
+
+            fig_s.add_trace(
+                go.Scatter(
+                    x=horas_proy,
+                    y=almacenamientos_proyectados,
+                    mode="lines",
+                    name="Proyección Resto del Día (Hacia Meta 75%)",
+                    line=dict(color="#e67e22", width=3, dash="dot"),
+                )
+            )
+    else:
+        fig_s.add_trace(
+            go.Scatter(
+                x=[hora_actual],
+                y=[pct_almacenamiento_actual],
+                mode="markers+text",
+                name="Almacenamiento Actual",
+                text=[f"{pct_almacenamiento_actual:.1f}%"],
+                textposition="top center",
+                marker=dict(color="#e67e22", size=14, symbol="star"),
+            )
+        )
+
     fig_s.add_hline(
         y=META_AMANECER_PCT,
         line_dash="dot",
@@ -472,44 +574,19 @@ with tab_g2:
         xaxis_title="Hora del Día",
         yaxis_title="Almacenamiento Sistema (%)",
         template="plotly_white",
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
     )
     st.plotly_chart(fig_s, use_container_width=True)
 
 with tab_g3:
     st.markdown(
-        "### 🗂️ Consulta de Histórico de Operaciones Guardadas en la Nube"
+        f"### 🗂️ Trazabilidad y Comportamiento del Día: {fecha_actual}"
     )
-    df_historico_show = cargar_historico()
-    if not df_historico_show.empty:
-        fechas_disponibles = df_historico_show["Fecha"].unique()
-        fecha_filtro = st.selectbox(
-            "Seleccione la fecha a consultar", options=fechas_disponibles
-        )
-        df_filtrado = df_historico_show[
-            df_historico_show["Fecha"] == fecha_filtro
-        ]
-        st.dataframe(df_filtrado, use_container_width=True)
-
-        fig_hist = go.Figure()
-        fig_hist.add_trace(
-            go.Scatter(
-                x=df_filtrado["Hora"],
-                y=df_filtrado["Almacenamiento_Sistema_Pct"],
-                mode="lines+markers",
-                name="Almacenamiento Real Registrado (%)",
-                line=dict(color="#27ae60", width=3),
-            )
-        )
-        fig_hist.update_layout(
-            title=f"Comportamiento Histórico - Fecha: {fecha_filtro}",
-            xaxis_title="Hora",
-            yaxis_title="Almacenamiento (%)",
-            template="plotly_white",
-        )
-        st.plotly_chart(fig_hist, use_container_width=True)
+    if not df_dia_actual.empty:
+        st.dataframe(df_dia_actual, use_container_width=True)
     else:
         st.info(
-            "Aún no hay registros guardados en el histórico. Usa el botón 'Guardar / Registrar Hora en Histórico' para comenzar a almacenar datos."
+            f"No hay registros guardados aún para la fecha {fecha_actual}. Usa el botón 'Guardar / Registrar Hora en Histórico' para acumular la tendencia horaria."
         )
 
 # ---------------------------------------------------------
