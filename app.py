@@ -29,7 +29,7 @@ st.title(
     "💧 Sistema de Control, Históricos y Proyección — Aguas de Cartagena S.A. E.S.P."
 )
 st.markdown(
-    "Monitoreo de tanques en centímetros, validación de bandas de caudal en **$m^3/h$** (hasta 20,000 m³/h), almacenamiento histórico y contraste frente a metas."
+    "Monitoreo de tanques en centímetros (desde 0 cm), validación de bandas de caudal en **$m^3/h$** (hasta 20,000 m³/h), almacenamiento histórico y contraste frente a metas."
 )
 
 # ---------------------------------------------------------
@@ -224,7 +224,7 @@ hora_actual = st.sidebar.selectbox(
 )
 
 # ---------------------------------------------------------
-# 4. MÓDULO DE ACTUALIZACIÓN DE NIVELES (CM) Y CAUDAL (M3/H)
+# 4. MÓDULO DE ACTUALIZACIÓN DE NIVELES (CM desde 0) Y CAUDAL (M3/H)
 # ---------------------------------------------------------
 st.markdown(
     f"### 📥 Registro Operativo — Fecha: {fecha_actual} | Hora: {hora_actual:02d}:00 hrs"
@@ -248,6 +248,7 @@ with col_ingreso1:
         val_cm_sugerido = alt_max * pct_sugerido * 0.9
 
         with t_cols[idx % 2]:
+            # min_value ajustado estrictamente a 0.0 para permitir registrar tanques vacíos o en cero
             niveles_cm_ingresados[tanque] = st.number_input(
                 f"{tanque.replace('Nivel_', '')} (Máx: {alt_max:,.0f} cm)",
                 min_value=0.0,
@@ -260,7 +261,6 @@ with col_ingreso1:
 
 with col_ingreso2:
     st.markdown("##### ⚡ Operación de Red")
-    # Límite superior ampliado hasta 20,000 m3/h para proyección a futuro
     caudal_distribucion_actual = st.number_input(
         "Caudal Distribución Real ($m^3/h$)",
         min_value=0.0,
@@ -270,7 +270,6 @@ with col_ingreso2:
         key="input_caudal_real",
     )
 
-    # Botón para guardar en el histórico persistente
     guardar_registro = st.button(
         "💾 Guardar / Registrar Hora en Histórico", type="primary"
     )
@@ -315,7 +314,6 @@ estado_op_str = (
     else "Requiere Ajuste"
 )
 
-# Guardar si el usuario hace clic en el botón
 if guardar_registro:
     df_hist = cargar_historico()
     nuevo_registro = {
@@ -387,7 +385,7 @@ with kpi4:
     )
 
 # ---------------------------------------------------------
-# 7. DASHBOARD GRÁFICO DE CONTRASTE (NIVELES Y CAUDAL)
+# 7. DASHBOARD GRÁFICO DE CONTRASTE
 # ---------------------------------------------------------
 st.divider()
 st.subheader("📈 Dashboard Gráfico: Contraste Meta vs. Real")
