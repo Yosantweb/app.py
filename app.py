@@ -1,4 +1,5 @@
-import datetime
+import os
+from datetime import datetime
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -25,23 +26,51 @@ st.markdown(
 )
 
 st.title(
-    "💧 Sistema de Control y Proyección de Niveles — Aguas de Cartagena S.A. E.S.P."
+    "💧 Sistema de Control, Históricos y Proyección — Aguas de Cartagena S.A. E.S.P."
 )
 st.markdown(
-    "Monitoreo de tanques en centímetros, validación de bandas de caudal en **$m^3/h$** según almacenamiento a las 06:00 a.m. y control en tiempo real."
+    "Monitoreo de tanques en centímetros, validación de bandas de caudal en **$m^3/h$**, almacenamiento histórico y contraste frente a metas."
 )
 
 # ---------------------------------------------------------
-# 1. CONFIGURACIÓN DE TANQUES Y NIVELES MÁXIMOS (en centímetros)
+# 1. ARCHIVO HISTÓRICO PERSISTENTE (CSV)
+# ---------------------------------------------------------
+HISTORICO_FILE = "historico_operativo.csv"
+
+
+def cargar_historico():
+    if os.path.exists(HISTORICO_FILE):
+        return pd.read_csv(HISTORICO_FILE)
+    else:
+        # Crear estructura vacía si no existe
+        return pd.DataFrame(columns=[
+            "Fecha",
+            "Hora",
+            "Almacenamiento_06am_Pct",
+            "Nivel_Colinas_cm",
+            "Nivel_Carmelo_cm",
+            "Nivel_Tk1_Planta_cm",
+            "Nivel_Tk2_Planta_cm",
+            "Nivel_TkNar2_cm",
+            "Nivel_SuccionA_TkColinas_cm",
+            "Nivel_Tk_Lomas_cm",
+            "Caudal_Real_m3h",
+            "Almacenamiento_Sistema_Pct",
+            "Estado_Operativo",
+        ])
+
+
+# ---------------------------------------------------------
+# 2. CONFIGURACIÓN DE TANQUES Y NIVELES MÁXIMOS (en centímetros)
 # ---------------------------------------------------------
 ALTURAS_MAXIMAS_TANQUES = {
-    "Nivel_Colinas": 450.0,  # cm
-    "Nivel_Carmelo": 400.0,  # cm
-    "Nivel_Tk1_Planta": 300.0,  # cm
-    "Nivel_Tk2_Planta": 300.0,  # cm
-    "Nivel_TkNar2": 500.0,  # cm
-    "Nivel_SuccionA_TkColinas": 350.0,  # cm
-    "Nivel_Tk_Lomas": 400.0,  # cm
+    "Nivel_Colinas": 450.0,
+    "Nivel_Carmelo": 400.0,
+    "Nivel_Tk1_Planta": 300.0,
+    "Nivel_Tk2_Planta": 300.0,
+    "Nivel_TkNar2": 500.0,
+    "Nivel_SuccionA_TkColinas": 350.0,
+    "Nivel_Tk_Lomas": 400.0,
 }
 
 FACTORES_PONDERACION = {
@@ -54,10 +83,10 @@ FACTORES_PONDERACION = {
     "Nivel_Tk_Lomas": 0.05,
 }
 
-META_AMANECER_PCT = 75.0  # Regla de oro: 75% a las 06:00 a.m.
+META_AMANECER_PCT = 75.0
 horas_dia = list(range(24))
 
-# Curvas de referencia base del sistema (Caudal en m3/h aproximados para una red grande)
+# Curvas de referencia teóricas base del día
 almacenamiento_ideal_ref = [
     75,
     78,
@@ -172,9 +201,13 @@ df_curva_base = pd.DataFrame({
 })
 
 # ---------------------------------------------------------
-# 2. PANEL LATERAL: CONFIGURACIÓN GENERAL DEL TURNO
+# 3. PANEL LATERAL: CONFIGURACIÓN GENERAL DEL TURNO
 # ---------------------------------------------------------
-st.sidebar.header("🎛️ Parámetros del Turno")
+st.sidebar.header("🎛️ Parámetros del Turno y Fecha")
+
+fecha_actual = st.sidebar.date_input(
+    "Fecha de Operación", value=datetime.today()
+)
 
 almacenamiento_06am_pct = st.sidebar.number_input(
     "% Almacenamiento real (06:00 a.m.)",
@@ -182,7 +215,6 @@ almacenamiento_06am_pct = st.sidebar.number_input(
     max_value=100.0,
     value=72.0,
     step=0.5,
-    help="Porcentaje de almacenamiento con el que amaneció el sistema a las 06:00 a.m.",
 )
 
 st.sidebar.markdown("---")
@@ -192,13 +224,10 @@ hora_actual = st.sidebar.selectbox(
 )
 
 # ---------------------------------------------------------
-# 3. MÓDULO DE ACTUALIZACIÓN DE NIVELES (CM) Y CAUDAL (M3/H)
+# 4. MÓDULO DE ACTUALIZACIÓN DE NIVELES (CM) Y CAUDAL (M3/H)
 # ---------------------------------------------------------
 st.markdown(
-    f"### 📥 Registro Operativo en Tiempo Real — Hora: {hora_actual:02d}:00 hrs"
-)
-st.markdown(
-    "Actualiza los niveles leídos en pantalla (en **cm**) y el caudal de distribución real en **$m^3/h$**. El sistema calcula y valida automáticamente."
+    f"### 📥 Registro Operativo — Fecha: {fecha_actual} | Hora: {hora_actual:02d}:00 hrs"
 )
 
 col_ingreso1, col_ingreso2 = st.columns([2, 1])
@@ -225,6 +254,7 @@ with col_ingreso1:
                 max_value=alt_max * 1.1,
                 value=float(val_cm_sugerido),
                 step=1.0,
+                key=f"input_{tanque}",
             )
         idx += 1
 
@@ -233,16 +263,19 @@ with col_ingreso2:
     caudal_distribucion_actual = st.number_input(
         "Caudal Distribución Real ($m^3/h$)",
         min_value=0.0,
-        max_value=1000.0,
+        max_value=2000.0,
         value=350.0,
         step=5.0,
+        key="input_caudal_real",
     )
-    st.info(
-        "💡 **Cálculo automático:** Al modificar cualquier valor, el tablero superior y los gráficos se actualizan de inmediato."
+
+    # Botón para guardar en el histórico persistente
+    guardar_registro = st.button(
+        "💾 Guardar / Registrar Hora en Histórico", type="primary"
     )
 
 # ---------------------------------------------------------
-# 4. LÓGICA Y CÁLCULOS TÉCNICOS
+# 5. CÁLCULOS TÉCNICOS Y VALIDACIÓN
 # ---------------------------------------------------------
 pct_almacenamiento_actual = 0.0
 for tanque, cm_val in niveles_cm_ingresados.items():
@@ -251,7 +284,6 @@ for tanque, cm_val in niveles_cm_ingresados.items():
     fraccion_tanque = min(1.0, cm_val / alt_max)
     pct_almacenamiento_actual += fraccion_tanque * peso * 100.0
 
-# Factor de ajuste según el almacenamiento a las 06:00 a.m.
 factor_condicion_matutina = 1.0
 if almacenamiento_06am_pct < META_AMANECER_PCT:
     factor_condicion_matutina = max(
@@ -271,157 +303,224 @@ df_curva_base["Caudal_Max_Ajustado"] = (
 fila_ref = df_curva_base[df_curva_base["Hora"] == hora_actual].iloc[0]
 c_min_permitido = fila_ref["Caudal_Min_Ajustado"]
 c_max_permitido = fila_ref["Caudal_Max_Ajustado"]
-c_obj_esperado = fila_ref["Caudal_Prom_Ajustado"]
+almacenamiento_meta_hora = fila_ref["Almacenamiento_Ideal_Pct"]
 
 caudal_en_rango = (c_min_permitido <= caudal_distribucion_actual) and (
     caudal_distribucion_actual <= c_max_permitido
 )
+estado_op_str = (
+    "Normal / Seguro"
+    if (almacenamiento_06am_pct >= META_AMANECER_PCT and caudal_en_rango)
+    else "Requiere Ajuste"
+)
+
+# Guardar si el usuario hace clic en el botón
+if guardar_registro:
+    df_hist = cargar_historico()
+    nuevo_registro = {
+        "Fecha": str(fecha_actual),
+        "Hora": f"{hora_actual:02d}:00",
+        "Almacenamiento_06am_Pct": almacenamiento_06am_pct,
+        "Nivel_Colinas_cm": niveles_cm_ingresados["Nivel_Colinas"],
+        "Nivel_Carmelo_cm": niveles_cm_ingresados["Nivel_Carmelo"],
+        "Nivel_Tk1_Planta_cm": niveles_cm_ingresados["Nivel_Tk1_Planta"],
+        "Nivel_Tk2_Planta_cm": niveles_cm_ingresados["Nivel_Tk2_Planta"],
+        "Nivel_TkNar2_cm": niveles_cm_ingresados["Nivel_TkNar2"],
+        "Nivel_SuccionA_TkColinas_cm": niveles_cm_ingresados[
+            "Nivel_SuccionA_TkColinas"
+        ],
+        "Nivel_Tk_Lomas_cm": niveles_cm_ingresados["Nivel_Tk_Lomas"],
+        "Caudal_Real_m3h": caudal_distribucion_actual,
+        "Almacenamiento_Sistema_Pct": round(pct_almacenamiento_actual, 2),
+        "Estado_Operativo": estado_op_str,
+    }
+    # Evitar duplicados para la misma fecha y hora
+    df_hist = df_hist[
+        ~((df_hist["Fecha"] == str(fecha_actual)) & (df_hist["Hora"] == f"{hora_actual:02d}:00"))
+    ]
+    df_hist = pd.concat(
+        [df_hist, pd.DataFrame([nuevo_registro])], ignore_index=True
+    )
+    df_hist.to_csv(HISTORICO_FILE, index=False)
+    st.success(
+        f"✅ ¡Registro guardado exitosamente en el histórico para el {fecha_actual} a las {hora_actual:02d}:00 hrs!"
+    )
 
 # ---------------------------------------------------------
-# 5. TABLERO DE CONTROL EJECUTIVO (KPIs)
+# 6. TABLERO DE CONTROL EJECUTIVO (KPIs)
 # ---------------------------------------------------------
 st.divider()
 st.subheader(
-    f"📊 Indicadores de Gestión del Sistema — Corte {hora_actual:02d}:00 hrs"
+    f"📊 Indicadores de Contraste — Corte {hora_actual:02d}:00 hrs"
 )
 
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 
 with kpi1:
-    delta_am_txt = (
-        "Cumple Meta (≥ 75%)"
-        if almacenamiento_06am_pct >= META_AMANECER_PCT
-        else "Déficit Matutino"
-    )
-    col_am = "normal" if almacenamiento_06am_pct >= META_AMANECER_PCT else "inverse"
     st.metric(
         label="🌅 Almacenamiento 06:00 a.m.",
         value=f"{almacenamiento_06am_pct:.1f}%",
-        delta=delta_am_txt,
-        delta_color=col_am,
+        delta="Meta ≥ 75%",
     )
 
 with kpi2:
+    delta_alm = pct_almacenamiento_actual - almacenamiento_meta_hora
     st.metric(
         label="💧 Almacenamiento Sistema",
         value=f"{pct_almacenamiento_actual:.1f}%",
-        delta="Calculado por Niveles (cm)",
+        delta=f"{delta_alm:+.1f}% vs Meta ({storage_meta if 'storage_meta' in locals() else almacenamiento_meta_hora}%)",
     )
 
 with kpi3:
-    col_cau = "normal" if caudal_en_rango else "inverse"
     st.metric(
         label="⚡ Caudal Operando",
         value=f"{caudal_distribucion_actual:.1f} m³/h",
         delta=f"Rango: [{c_min_permitido:.1f} - {c_max_permitido:.1f}] m³/h",
-        delta_color=col_cau,
     )
 
 with kpi4:
-    estado_op = (
-        "🟢 Normal / Seguro"
-        if (almacenamiento_06am_pct >= META_AMANECER_PCT and caudal_en_rango)
-        else "🟠 Requiere Ajuste"
-    )
-    st.metric(label="Estado Operativo", value=estado_op)
-
-# ---------------------------------------------------------
-# 6. MÓDULO DE DIAGNÓSTICO Y RECOMENDACIÓN PARA EL RESTO DEL DÍA
-# ---------------------------------------------------------
-st.divider()
-st.subheader(
-    "⚙️ Diagnóstico y Estrategia de Operación para las Horas Restantes"
-)
-
-volumen_meta_amanecer_pct = META_AMANECER_PCT
-
-if pct_almacenamiento_actual < volumen_meta_amanecer_pct or (
-    not caudal_en_rango and caudal_distribucion_actual > c_max_permitido
-):
-    st.warning(
-        f"⚠️ **Atención Operativa:** El sistema presenta desviaciones frente a la trayectoria ideal. "
-        f"Con un almacenamiento actual de **{pct_almacenamiento_actual:.1f}%** y un caudal operando de **{caudal_distribucion_actual:.1f} m³/h**, "
-        f"se corre el riesgo de incumplir la meta del 75% para el próximo amanecer."
-    )
-    # Cálculo de recomendación
-    diferencia_caudal = caudal_distribucion_actual - c_obj_esperado
-    if diferencia_caudal > 0:
-        st.markdown(
-            f"💡 **Acción Recomendada:** Se está entregando un caudal superior al objetivo en **{diferencia_caudal:.1f} m³/h**. "
-            f"Se sugiere **restringir gradual y progresivamente las válvulas** para retornar a la banda permitida de **[{c_min_permitido:.1f} - {c_max_permitido:.1f}] m³/h**."
-        )
-    else:
-        st.markdown(
-            f"💡 **Acción Recomendada:** Monitorear tanques de cabecera y mantener la consigna dentro del rango operativo establecido."
-        )
-else:
-    st.success(
-        f"✅ **Operación Óptima:** El sistema se encuentra operando de manera estable dentro de las bandas de control. "
-        f"El almacenamiento actual (**{pct_almacenamiento_actual:.1f}%**) y el caudal de distribución (**{caudal_distribucion_actual:.1f} m³/h**) garantizan la recuperación y el cumplimiento de la meta."
-    )
-
-# ---------------------------------------------------------
-# 7. GRÁFICO DE CONTROL DE CAUDAL Y COMPARACIÓN
-# ---------------------------------------------------------
-st.subheader(
-    "📈 Validación de Caudal Real vs. Bandas Operativas del Día (en m³/h)"
-)
-
-fig = go.Figure()
-
-# Banda operativa permitida
-fig.add_trace(
-    go.Scatter(
-        x=horas_dia + horas_dia[::-1],
-        y=list(df_curva_base["Caudal_Max_Ajustado"])
-        + list(df_curva_base["Caudal_Min_Ajustado"])[::-1],
-        fill="toself",
-        fillcolor="rgba(11, 60, 93, 0.1)",
-        line=dict(color="rgba(255,255,255,0)"),
-        name="Banda Operativa Permitida",
-    )
-)
-
-# Caudal objetivo
-fig.add_trace(
-    go.Scatter(
-        x=df_curva_base["Hora"],
-        y=df_curva_base["Caudal_Prom_Ajustado"],
-        mode="lines",
-        name="Caudal Objetivo (Promedio)",
-        line=dict(color="#0b3c5d", width=2, dash="dash"),
-    )
-)
-
-# Punto registrado por el operador en la hora actual
-fig.add_trace(
-    go.Scatter(
-        x=[hora_actual],
-        y=[caudal_distribucion_actual],
-        mode="markers+text",
-        name="Caudal Registrado (Turno)",
-        text=[f"{caudal_distribucion_actual} m³/h"],
-        textposition="top center",
-        marker=dict(
-            color="#2ecc71" if caudal_en_rango else "#e74c3c",
-            size=16,
-            symbol="diamond",
+    st.metric(
+        label="Estado Operativo",
+        value=(
+            "🟢 Normal" if estado_op_str == "Normal / Seguro" else "🟠 Ajuste"
         ),
     )
-)
-
-fig.update_layout(
-    xaxis_title="Hora del Día (Hrs)",
-    yaxis_title="Caudal de Distribución (m³/h)",
-    template="plotly_white",
-    legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
-)
-st.plotly_chart(fig, use_container_width=True)
 
 # ---------------------------------------------------------
-# 8. RESUMEN DETALLADO POR TANQUE (EN CM)
+# 7. DASHBOARD GRÁFICO DE CONTRASTE (NIVELES Y CAUDAL)
 # ---------------------------------------------------------
-st.subheader("📋 Estado Detallado por Estación de Tanques (Niveles en cm)")
+st.divider()
+st.subheader("📈 Dashboard Gráfico: Contraste Meta vs. Real")
+
+tab_g1, tab_g2, tab_g3 = st.tabs([
+    "⚡ Contraste de Caudal",
+    "💧 Almacenamiento Global",
+    "📊 Histórico Operativo Consultado",
+])
+
+with tab_g1:
+    fig_c = go.Figure()
+    fig_c.add_trace(
+        go.Scatter(
+            x=horas_dia + horas_dia[::-1],
+            y=list(df_curva_base["Caudal_Max_Ajustado"])
+            + list(df_curva_base["Caudal_Min_Ajustado"])[::-1],
+            fill="toself",
+            fillcolor="rgba(11, 60, 93, 0.1)",
+            line=dict(color="rgba(255,255,255,0)"),
+            name="Banda Permitida",
+        )
+    )
+    fig_c.add_trace(
+        go.Scatter(
+            x=df_curva_base["Hora"],
+            y=df_curva_base["Caudal_Prom_Ajustado"],
+            mode="lines",
+            name="Caudal Objetivo",
+            line=dict(color="#0b3c5d", width=2, dash="dash"),
+        )
+    )
+    fig_c.add_trace(
+        go.Scatter(
+            x=[hora_actual],
+            y=[caudal_distribucion_actual],
+            mode="markers+text",
+            name="Caudal Real Operando",
+            text=[f"{caudal_distribucion_actual} m³/h"],
+            textposition="top center",
+            marker=dict(
+                color="#2ecc71" if caudal_en_rango else "#e74c3c",
+                size=16,
+                symbol="diamond",
+            ),
+        )
+    )
+    fig_c.update_layout(
+        xaxis_title="Hora del Día",
+        yaxis_title="Caudal (m³/h)",
+        template="plotly_white",
+    )
+    st.plotly_chart(fig_c, use_container_width=True)
+
+with tab_g2:
+    fig_s = go.Figure()
+    fig_s.add_trace(
+        go.Scatter(
+            x=df_curva_base["Hora"],
+            y=df_curva_base["Almacenamiento_Ideal_Pct"],
+            mode="lines+markers",
+            name="Curva Meta Almacenamiento (%)",
+            line=dict(color="#2980b9", width=3),
+        )
+    )
+    fig_s.add_trace(
+        go.Scatter(
+            x=[hora_actual],
+            y=[pct_almacenamiento_actual],
+            mode="markers+text",
+            name="Almacenamiento Real Actual",
+            text=[f"{pct_almacenamiento_actual:.1f}%"],
+            textposition="top center",
+            marker=dict(color="#e67e22", size=16, symbol="star"),
+        )
+    )
+    fig_s.add_hline(
+        y=META_AMANECER_PCT,
+        line_dash="dot",
+        line_color="red",
+        annotation_text="Meta Amanecer 75%",
+    )
+    fig_s.update_layout(
+        xaxis_title="Hora del Día",
+        yaxis_title="Almacenamiento Sistema (%)",
+        template="plotly_white",
+    )
+    st.plotly_chart(fig_s, use_container_width=True)
+
+with tab_g3:
+    st.markdown(
+        "### 🗂️ Consulta de Histórico de Operaciones Guardadas en la Nube"
+    )
+    df_historico_show = cargar_historico()
+    if not df_historico_show.empty:
+        # Filtro opcional por fecha
+        fechas_disponibles = df_historico_show["Fecha"].unique()
+        fecha_filtro = st.selectbox(
+            "Seleccione la fecha a consultar", options=fechas_disponibles
+        )
+        df_filtrado = df_historico_show[
+            df_historico_show["Fecha"] == fecha_filtro
+        ]
+        st.dataframe(df_filtrado, use_container_width=True)
+
+        # Gráfico histórico del día seleccionado
+        fig_hist = go.Figure()
+        fig_hist.add_trace(
+            go.Scatter(
+                x=df_filtrado["Hora"],
+                y=df_filtrado["Almacenamiento_Sistema_Pct"],
+                mode="lines+markers",
+                name="Almacenamiento Real Registrado (%)",
+                line=dict(color="#27ae60", width=3),
+            )
+        )
+        fig_hist.update_layout(
+            title=f"Comportamiento Histórico - Fecha: {fecha_filtro}",
+            xaxis_title="Hora",
+            yaxis_title="Almacenamiento (%)",
+            template="plotly_white",
+        )
+        st.plotly_chart(fig_hist, use_container_width=True)
+    else:
+        st.info(
+            "Aún no hay registros guardados en el histórico. Usa el botón 'Guardar / Registrar Hora en Histórico' para comenzar a almacenar datos."
+        )
+
+# ---------------------------------------------------------
+# 8. DETALLE DE TANQUES
+# ---------------------------------------------------------
+st.divider()
+st.subheader("📋 Estado Actual de Niveles por Tanque (cm)")
 df_resumen_tanques = pd.DataFrame({
     "Estación / Tanque": list(ALTURAS_MAXIMAS_TANQUES.keys()),
     "Altura Máxima (cm)": list(ALTURAS_MAXIMAS_TANQUES.values()),
