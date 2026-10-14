@@ -29,7 +29,7 @@ st.title(
     "💧 Sistema de Control, Históricos y Proyección — Aguas de Cartagena S.A. E.S.P."
 )
 st.markdown(
-    "Monitoreo de tanques en centímetros, validación de bandas de caudal en **$m^3/h$**, almacenamiento histórico y contraste frente a metas."
+    "Monitoreo de tanques en centímetros, validación de bandas de caudal en **$m^3/h$** (hasta 20,000 m³/h), almacenamiento histórico y contraste frente a metas."
 )
 
 # ---------------------------------------------------------
@@ -42,7 +42,6 @@ def cargar_historico():
     if os.path.exists(HISTORICO_FILE):
         return pd.read_csv(HISTORICO_FILE)
     else:
-        # Crear estructura vacía si no existe
         return pd.DataFrame(columns=[
             "Fecha",
             "Hora",
@@ -86,7 +85,7 @@ FACTORES_PONDERACION = {
 META_AMANECER_PCT = 75.0
 horas_dia = list(range(24))
 
-# Curvas de referencia teóricas base del día
+# Curvas de referencia teóricas base del día (Escala real del sistema hasta ~14,500 m3/h)
 almacenamiento_ideal_ref = [
     75,
     78,
@@ -114,82 +113,82 @@ almacenamiento_ideal_ref = [
     75,
 ]
 caudal_min_ref = [
-    120,
-    100,
-    80,
-    80,
-    100,
-    150,
-    250,
-    300,
-    320,
-    280,
-    250,
-    230,
-    230,
-    240,
-    280,
-    300,
-    320,
-    300,
-    240,
-    200,
-    160,
-    130,
-    110,
-    100,
+    5000,
+    4500,
+    4000,
+    4000,
+    4500,
+    6000,
+    9000,
+    11000,
+    12000,
+    10500,
+    9500,
+    9000,
+    9000,
+    9500,
+    11000,
+    12000,
+    12500,
+    11500,
+    9500,
+    8000,
+    6500,
+    5500,
+    5000,
+    4500,
 ]
 caudal_prom_ref = [
-    150,
-    130,
-    110,
-    110,
-    130,
-    180,
-    300,
-    350,
-    380,
-    340,
-    310,
-    290,
-    290,
-    300,
-    340,
-    370,
-    390,
-    370,
-    300,
-    250,
-    210,
-    180,
-    160,
-    150,
+    6000,
+    5500,
+    5000,
+    5000,
+    5500,
+    7500,
+    11000,
+    13000,
+    14000,
+    12500,
+    11500,
+    11000,
+    11000,
+    11500,
+    13000,
+    14000,
+    14500,
+    13500,
+    11000,
+    9500,
+    8000,
+    7000,
+    6500,
+    6000,
 ]
 caudal_max_ref = [
-    180,
-    160,
-    140,
-    140,
-    160,
-    220,
-    350,
-    400,
-    430,
-    390,
-    360,
-    340,
-    340,
-    350,
-    390,
-    420,
-    440,
-    420,
-    350,
-    300,
-    260,
-    220,
-    200,
-    180,
+    7000,
+    6500,
+    6000,
+    6000,
+    6500,
+    9000,
+    13000,
+    15000,
+    16000,
+    14500,
+    13500,
+    13000,
+    13000,
+    13500,
+    15000,
+    16000,
+    16500,
+    15500,
+    13000,
+    11000,
+    9500,
+    8500,
+    7500,
+    7000,
 ]
 
 df_curva_base = pd.DataFrame({
@@ -215,6 +214,7 @@ almacenamiento_06am_pct = st.sidebar.number_input(
     max_value=100.0,
     value=72.0,
     step=0.5,
+    help="Porcentaje de almacenamiento con el que amaneció el sistema a las 06:00 a.m.",
 )
 
 st.sidebar.markdown("---")
@@ -260,12 +260,13 @@ with col_ingreso1:
 
 with col_ingreso2:
     st.markdown("##### ⚡ Operación de Red")
+    # Límite superior ampliado hasta 20,000 m3/h para proyección a futuro
     caudal_distribucion_actual = st.number_input(
         "Caudal Distribución Real ($m^3/h$)",
         min_value=0.0,
-        max_value=2000.0,
-        value=350.0,
-        step=5.0,
+        max_value=20000.0,
+        value=12000.0,
+        step=100.0,
         key="input_caudal_real",
     )
 
@@ -334,7 +335,6 @@ if guardar_registro:
         "Almacenamiento_Sistema_Pct": round(pct_almacenamiento_actual, 2),
         "Estado_Operativo": estado_op_str,
     }
-    # Evitar duplicados para la misma fecha y hora
     df_hist = df_hist[
         ~((df_hist["Fecha"] == str(fecha_actual)) & (df_hist["Hora"] == f"{hora_actual:02d}:00"))
     ]
@@ -368,14 +368,14 @@ with kpi2:
     st.metric(
         label="💧 Almacenamiento Sistema",
         value=f"{pct_almacenamiento_actual:.1f}%",
-        delta=f"{delta_alm:+.1f}% vs Meta ({storage_meta if 'storage_meta' in locals() else almacenamiento_meta_hora}%)",
+        delta=f"{delta_alm:+.1f}% vs Meta ({almacenamiento_meta_hora}%)",
     )
 
 with kpi3:
     st.metric(
         label="⚡ Caudal Operando",
-        value=f"{caudal_distribucion_actual:.1f} m³/h",
-        delta=f"Rango: [{c_min_permitido:.1f} - {c_max_permitido:.1f}] m³/h",
+        value=f"{caudal_distribucion_actual:,.1f} m³/h",
+        delta=f"Rango: [{c_min_permitido:,.1f} - {c_max_permitido:,.1f}] m³/h",
     )
 
 with kpi4:
@@ -426,7 +426,7 @@ with tab_g1:
             y=[caudal_distribucion_actual],
             mode="markers+text",
             name="Caudal Real Operando",
-            text=[f"{caudal_distribucion_actual} m³/h"],
+            text=[f"{caudal_distribucion_actual:,.0f} m³/h"],
             textposition="top center",
             marker=dict(
                 color="#2ecc71" if caudal_en_rango else "#e74c3c",
@@ -483,7 +483,6 @@ with tab_g3:
     )
     df_historico_show = cargar_historico()
     if not df_historico_show.empty:
-        # Filtro opcional por fecha
         fechas_disponibles = df_historico_show["Fecha"].unique()
         fecha_filtro = st.selectbox(
             "Seleccione la fecha a consultar", options=fechas_disponibles
@@ -493,7 +492,6 @@ with tab_g3:
         ]
         st.dataframe(df_filtrado, use_container_width=True)
 
-        # Gráfico histórico del día seleccionado
         fig_hist = go.Figure()
         fig_hist.add_trace(
             go.Scatter(
