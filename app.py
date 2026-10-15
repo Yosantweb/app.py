@@ -454,7 +454,7 @@ with kpi4:
     )
 
 # ---------------------------------------------------------
-# 8. DASHBOARDS GRÁFICOS INTERACTIVOS CON CURVAS SUAVIZADAS
+# 8. DASHBOARDS GRÁFICOS INTERACTIVOS CON COMPARATIVA REAL VS META
 # ---------------------------------------------------------
 st.divider()
 st.subheader("📈 Dashboard Gráfico: Tendencias Suavizadas y Proyecciones")
@@ -468,28 +468,31 @@ tab1, tab2, tab3, tab4 = st.tabs([
 
 with tab1:
     fig_s = go.Figure()
+    # 1. Curva Meta Teórica
     fig_s.add_trace(
         go.Scatter(
             x=df_curva_base["Hora"],
             y=df_curva_base["Almacenamiento_Ideal_Pct"],
             mode="lines",
             name="Curva Meta Almacenamiento (%)",
-            line=dict(color="#2980b9", width=3, shape="spline"),
+            line=dict(color="#2980b9", width=2, dash="dash", shape="spline"),
         )
     )
 
     if not df_dia_actual.empty:
+        # 2. Curva Real Acumulada
         fig_s.add_trace(
             go.Scatter(
                 x=df_dia_ord["Hora_Int"],
                 y=df_dia_ord["Almacenamiento_Bosque_Pct"],
                 mode="lines+markers",
-                name="Almacenamiento Real Acumulado",
+                name="Almacenamiento Real (Transcurrido)",
                 line=dict(color="#27ae60", width=3, shape="spline"),
                 marker=dict(size=8),
             )
         )
 
+        # 3. Curva Proyección Resto del Día
         ultima_h = df_dia_ord["Hora_Int"].max()
         if ultima_h < 23:
             horas_p = list(range(int(ultima_h), 24))
@@ -526,11 +529,13 @@ with tab1:
         xaxis_title="Hora del Día",
         yaxis_title="Almacenamiento PTAP Bosque (%)",
         template="plotly_white",
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
     )
     st.plotly_chart(fig_s, use_container_width=True)
 
 with tab2:
     fig_c = go.Figure()
+    # 1. Banda Permitida (Máx - Mín)
     fig_c.add_trace(
         go.Scatter(
             x=horas_dia + horas_dia[::-1],
@@ -542,6 +547,7 @@ with tab2:
             name="Banda Permitida (Máx - Mín)",
         )
     )
+    # 2. Caudal Objetivo (Meta)
     fig_c.add_trace(
         go.Scatter(
             x=df_curva_base["Hora"],
@@ -553,6 +559,7 @@ with tab2:
     )
 
     if not df_dia_actual.empty:
+        # 3. Caudal Real Transcurrido
         fig_c.add_trace(
             go.Scatter(
                 x=df_dia_ord["Hora_Int"],
@@ -564,6 +571,7 @@ with tab2:
             )
         )
 
+        # 4. Proyección Caudal Resto del Día
         ultima_h = df_dia_ord["Hora_Int"].max()
         if ultima_h < 23:
             horas_p = list(range(int(ultima_h), 24))
@@ -581,7 +589,7 @@ with tab2:
                     x=horas_p,
                     y=proy_c,
                     mode="lines",
-                    name="Proyección Caudal",
+                    name="Proyección Caudal Resto del Día",
                     line=dict(
                         color="#e67e22", width=3, dash="dot", shape="spline"
                     ),
@@ -597,6 +605,7 @@ with tab2:
         xaxis_title="Hora del Día",
         yaxis_title="Caudal Distribución (m³/h)",
         template="plotly_white",
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
     )
     st.plotly_chart(fig_c, use_container_width=True)
 
@@ -611,7 +620,7 @@ with tab3:
                 x=df_dia_ord["Hora_Int"],
                 y=df_dia_ord["Pct_Almacenamiento_Cerro"],
                 mode="lines+markers",
-                name="% Almacenamiento Cerro",
+                name="% Almacenamiento Cerro (Real)",
                 line=dict(color="#8e44ad", width=3, shape="spline"),
             )
         )
