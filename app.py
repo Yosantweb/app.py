@@ -32,55 +32,48 @@ st.markdown(
 )
 
 # ---------------------------------------------------------
-# 1. ARCHIVO HISTÓRICO PERSISTENTE (CSV)
+# 1. ARCHIVO HISTÓRICO PERSISTENTE (CSV CON AUTOCORRECCIÓN)
 # ---------------------------------------------------------
 HISTORICO_FILE = "historico_operativo.csv"
+
+COLUMNAS_ESPERADAS = [
+    "Fecha",
+    "Hora",
+    "Produccion_Planta_m3d",
+    "Almacenamiento_06am_Pct",
+    "Nivel_Tk1_Planta",
+    "Nivel_Tk2_Planta",
+    "Nivel_SuccionA_TkColinas",
+    "Nivel_Colinas_Tk2",
+    "Nivel_TkNar2",
+    "Nivel_Tk_Lomas",
+    "Nivel_Carmelo",
+    "EBAP_1_TP_LIT_001.PV",
+    "EBAP_1_OO_PIT_001.PV",
+    "Volumen_Cerro_m3",
+    "Pct_Almacenamiento_Cerro",
+    "Caudal_Distribución",
+    "Almacenamiento_Sistema_Pct",
+    "Volumen_Total_Bosque_m3",
+    "Estado_Operativo",
+]
 
 
 def cargar_historico():
     if os.path.exists(HISTORICO_FILE):
-        return pd.read_csv(HISTORICO_FILE)
+        df_h = pd.read_csv(HISTORICO_FILE)
+        # Autocorrección: si falta alguna columna en el CSV antiguo, se agrega con valores por defecto
+        for col in COLUMNAS_ESPERADAS:
+            if col not in df_h.columns:
+                df_h[col] = 0.0 if col != "Estado_Operativo" else "Normal / Seguro"
+        return df_h
     else:
-        return pd.DataFrame(columns=[
-            "Fecha",
-            "Hora",
-            "Produccion_Planta_m3d",
-            "Almacenamiento_06am_Pct",
-            # Niveles tanques Bosque (cm)
-            "Nivel_Tk1_Planta",
-            "Nivel_Tk2_Planta",
-            "Nivel_SuccionA_TkColinas",
-            "Nivel_Colinas_Tk2",
-            "Nivel_TkNar2",
-            "Nivel_Tk_Lomas",
-            "Nivel_Carmelo",
-            # Planta El Cerro
-            "EBAP_1_TP_LIT_001.PV",  # Nivel en metros
-            "EBAP_1_OO_PIT_001.PV",  # Presión salida Cerro
-            "Volumen_Cerro_m3",
-            "Pct_Almacenamiento_Cerro",
-            # Operación de red
-            "Caudal_Distribución",
-            "Almacenamiento_Sistema_Pct",  # PTAP Bosque %
-            "Volumen_Total_Bosque_m3",
-            "Estado_Operativo",
-        ])
+        return pd.DataFrame(columns=COLUMNAS_ESPERADAS)
 
 
 # ---------------------------------------------------------
 # 2. PARÁMETROS FÍSICOS DE TANQUES Y PLANTA EL CERRO
 # ---------------------------------------------------------
-# Capacidades máximas aproximadas en m3 para PTAP Bosque (Total efectivo ~50,000 m3)
-CAPACIDADES_MAXIMAS_BOSQUE = {
-    "Nivel_Tk1_Planta": 3000.0,
-    "Nivel_Tk2_Planta": 3000.0,
-    "Nivel_SuccionA_TkColinas": 5000.0,
-    "Nivel_Colinas_Tk2": 15000.0,
-    "Nivel_TkNar2": 10000.0,
-    "Nivel_Tk_Lomas": 7000.0,
-    "Nivel_Carmelo": 7000.0,
-}
-
 FACTORES_PONDERACION_BOSQUE = {
     "Nivel_Tk1_Planta": 0.10,
     "Nivel_Tk2_Planta": 0.10,
@@ -140,7 +133,6 @@ archivo_subido = st.sidebar.file_uploader(
 
 if archivo_subido is not None:
     try:
-        # Lectura robusta de Excel (.xls / .xlsx) o CSV
         if archivo_subido.name.endswith(".csv"):
             df_subido = pd.read_csv(archivo_subido)
         else:
@@ -153,7 +145,6 @@ if archivo_subido is not None:
         if st.sidebar.button(
             "⚡ Sincronizar y Actualizar Histórico", type="primary"
         ):
-            # El archivo tiene la Columna 0 con los nombres de las variables y de la Columna 1 en adelante las horas
             col_var = df_subido.columns[0]
             cols_horas = [c for c in df_subido.columns if c != col_var]
 
@@ -161,7 +152,6 @@ if archivo_subido is not None:
             registros_actualizados = 0
 
             for h_col in cols_horas:
-                # Extraer la hora numérica de la columna (ej. "10:00:00 a. m." o "10:00 a. m.")
                 h_str = str(h_col).lower()
                 h_num = None
                 for h_i in range(24):
@@ -170,7 +160,6 @@ if archivo_subido is not None:
                         or f"{h_i}:00" in h_str
                         or f"{h_i}h" in h_str
                     ):
-                        # Validar si es PM y no es 12
                         if (
                             ("p. m." in h_str or "pm" in h_str)
                             and h_i < 12
@@ -187,10 +176,8 @@ if archivo_subido is not None:
                         break
 
                 if h_num is None:
-                    # Intento alternativo de extracción por posición o texto
                     continue
 
-                # Mapear diccionario de la columna de esta hora
                 dict_vals = dict(
                     zip(df_subido[col_var].astype(str).str.strip(), df_subido[h_col])
                 )
@@ -204,7 +191,7 @@ if archivo_subido is not None:
                     except:
                         return default
 
-                # Extraer niveles tanques Bosque
+                # Niveles tanques Bosque
                 t1 = get_val("Nivel_Tk1_Planta", 134.0)
                 t2 = get_val("Nivel_Tk2_Planta", 141.0)
                 suc = get_val("Nivel_SuccionA_TkColinas", 162.0)
@@ -213,8 +200,7 @@ if archivo_subido is not None:
                 lom = get_val("Nivel_Tk_Lomas", 257.0)
                 car = get_val("Nivel_Carmelo", 285.0)
 
-                # Cálculo Almacenamiento PTAP Bosque (%)
-                # Asumiendo proporciones de ocupación respecto a niveles típicos o máximos
+                # Almacenamiento PTAP Bosque (%)
                 alc_bosque = (
                     min(1.0, col2 / 450.0) * FACTORES_PONDERACION_BOSQUE["Nivel_Colinas_Tk2"]
                     + min(1.0, car / 400.0) * FACTORES_PONDERACION_BOSQUE["Nivel_Carmelo"]
@@ -229,7 +215,6 @@ if archivo_subido is not None:
 
                 # Planta El Cerro (Nivel en metros)
                 nivel_cerro_m = get_val("EBAP_1_TP_LIT_001.PV", 3.9)
-                # Volumen Cerro = Área (1350) * Nivel (m) [limitado al max]
                 vol_cerro = min(VOLUMEN_MAX_CERRO_M3, nivel_cerro_m * AREA_CERRO_M2)
                 pct_cerro = (vol_cerro / VOLUMEN_MAX_CERRO_M3) * 100.0
 
@@ -257,7 +242,6 @@ if archivo_subido is not None:
                     "Estado_Operativo": "Normal / Seguro",
                 }
 
-                # Guardar en histórico
                 df_hist = df_hist[
                     ~(
                         (df_hist["Fecha"] == str(fecha_actual))
@@ -271,7 +255,7 @@ if archivo_subido is not None:
 
             df_hist.to_csv(HISTORICO_FILE, index=False)
             st.sidebar.success(
-                f"🚀 ¡Sincronización completa! Se actualizaron {registros_actualizados} horas desde la plantilla."
+                f"🚀 ¡Sincronización completa! Se actualizaron {registros_actualizados} horas."
             )
     except Exception as e:
         st.sidebar.error(f"Error al procesar la plantilla: {e}")
@@ -329,7 +313,7 @@ if not df_dia_actual.empty:
 
     ultimo_reg = df_dia_ord.iloc[-1]
     ultima_H = int(ultimo_reg["Hora_Int"])
-    alm_actual = ultimo_reg["Almacenamiento_Sistema_Pct"]
+    alm_actual = float(ultimo_reg["Almacenamiento_Sistema_Pct"])
 
     meta_h = df_curva_base[df_curva_base["Hora"] == ultima_H]["Almacenamiento_Ideal_Pct"].values[0]
 
@@ -359,15 +343,15 @@ with kpi1:
     st.metric(label="🌅 Meta Amanecer Bosque", value="≥ 75.0%", delta=f"Base: {almacenamiento_06am_pct:.1f}%")
 
 with kpi2:
-    alm_val = df_dia_ord.iloc[-1]["Almacenamiento_Sistema_Pct"] if not df_dia_actual.empty else 55.0
+    alm_val = float(df_dia_ord.iloc[-1]["Almacenamiento_Sistema_Pct"]) if not df_dia_actual.empty else 55.0
     st.metric(label="💧 % Almacenamiento Bosque Actual", value=f"{alm_val:.1f}%", delta=f"Meta Hora: {meta_h}%" if not df_dia_actual.empty else "Esperando datos")
 
 with kpi3:
-    cerro_val = df_dia_ord.iloc[-1]["Pct_Almacenamiento_Cerro"] if not df_dia_actual.empty else 80.0
+    cerro_val = float(df_dia_ord.iloc[-1]["Pct_Almacenamiento_Cerro"]) if not df_dia_actual.empty else 80.0
     st.metric(label="⛰️ % Almacenamiento Planta Cerro", value=f"{cerro_val:.1f}%", delta="Independiente (Área 1,350 m²)")
 
 with kpi4:
-    caudal_val = df_dia_ord.iloc[-1]["Caudal_Distribución"] if not df_dia_actual.empty else 13500.0
+    caudal_val = float(df_dia_ord.iloc[-1]["Caudal_Distribución"]) if not df_dia_actual.empty else 13500.0
     st.metric(label="⚡ Caudal Distribución Actual", value=f"{caudal_val:,.0f} m³/h")
 
 # ---------------------------------------------------------
@@ -398,7 +382,7 @@ with tab1:
         ultima_h = df_dia_ord["Hora_Int"].max()
         if ultima_h < 23:
             horas_p = list(range(int(ultima_h), 24))
-            ultimo_a = df_dia_ord[df_dia_ord["Hora_Int"] == ultima_h]["Almacenamiento_Sistema_Pct"].values[0]
+            ultimo_a = float(df_dia_ord[df_dia_ord["Hora_Int"] == ultima_h]["Almacenamiento_Sistema_Pct"].values[0])
             proy_a = np.linspace(ultimo_a, 75.0, len(horas_p))
             fig_s.add_trace(go.Scatter(
                 x=horas_p, y=proy_a, mode="lines", name="Proyección Resto del Día (Hacia 75%)", line=dict(color="#e67e22", width=3, dash="dot", shape="spline")
@@ -429,7 +413,7 @@ with tab2:
         ultima_h = df_dia_ord["Hora_Int"].max()
         if ultima_h < 23:
             horas_p = list(range(int(ultima_h), 24))
-            ultimo_c = df_dia_ord[df_dia_ord["Hora_Int"] == ultima_h]["Caudal_Distribución"].values[0]
+            ultimo_c = float(df_dia_ord[df_dia_ord["Hora_Int"] == ultima_h]["Caudal_Distribución"].values[0])
             val_final = df_curva_base[df_curva_base["Hora"] == 23]["Caudal_Prom_Ajustado"].values[0]
             proy_c = np.linspace(ultimo_c, val_final, len(horas_p))
             fig_c.add_trace(go.Scatter(
