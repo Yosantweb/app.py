@@ -29,7 +29,7 @@ st.title(
     "💧 Sistema SCADA Operativo y Proyección — Aguas de Cartagena S.A. E.S.P."
 )
 st.markdown(
-    "Monitoreo avanzado, integración directa de tu consulta SCADA, curvas suavizadas y recomendación de ajuste operativo."
+    "Monitoreo avanzado, carga acumulativa progresiva por horas, curvas suavizadas y recomendación de ajuste operativo."
 )
 
 # ---------------------------------------------------------
@@ -76,8 +76,8 @@ def cargar_historico():
             "Presion_Olaya_Cjust",
             "Presion_Fredonia",
             "Pres_Ref_Bombeo_LaVictoria",
-            "Presion_Mop",
-            "Presion_Royalco",
+            "Pres_Mop",
+            "Pres_Royalco",
             "Presion_Bellavista_Agua_Potable",
             "Presion_Ent_Booster",
             "EBAP_1_OO_PIT_001.PV",
@@ -123,9 +123,9 @@ horas_format = {
 }
 
 # ---------------------------------------------------------
-# 3. PANEL LATERAL: PARÁMETROS Y CARGA DE PLANTILLA
+# 3. PANEL LATERAL: PARÁMETROS Y CARGA ACUMULATIVA DE PLANTILLA
 # ---------------------------------------------------------
-st.sidebar.header("🎛️ Parámetros y Carga de Plantilla SCADA")
+st.sidebar.header("🎛️ Parámetros y Carga Progresiva SCADA")
 
 fecha_actual = st.sidebar.date_input(
     "Fecha de Operación", value=datetime.today()
@@ -146,9 +146,9 @@ almacenamiento_06am_pct = st.sidebar.number_input(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📂 Cargar Plantilla de Consulta (Excel / CSV)")
+st.sidebar.subheader("📂 Cargar / Actualizar Consulta SCADA")
 archivo_subido = st.sidebar.file_uploader(
-    "Sube tu archivo con filas por hora y columnas por variable",
+    "Sube tu archivo con las horas acumuladas hasta el momento",
     type=["xlsx", "csv"],
 )
 
@@ -160,29 +160,32 @@ if archivo_subido is not None:
             df_subido = pd.read_excel(archivo_subido, sheet_name=0)
 
         st.sidebar.success(
-            "✅ ¡Plantilla leída con éxito! Haz clic en sincronizar."
+            "✅ ¡Consulta leída con éxito! Haz clic en sincronizar."
         )
 
         if st.sidebar.button(
-            "⚡ Sincronizar Plantilla al Histórico del Día", type="primary"
+            "⚡ Sincronizar y Actualizar Turno al Histórico", type="primary"
         ):
             df_hist = cargar_historico()
+            registros_procesados = 0
+            max_hora_cargada = 0
 
             for idx, row in df_subido.iterrows():
                 dt_val = row.get("DateTime", row.get("Fecha", None))
-                if pd.notna(dt_val):
-                    try:
-                        dt_parsed = pd.to_datetime(dt_val)
-                        h_num = dt_parsed.hour
-                        f_str = dt_parsed.strftime("%Y-%m-%d")
-                    except:
-                        h_num = idx % 24
-                        f_str = str(fecha_actual)
-                else:
-                    h_num = idx % 24
-                    f_str = str(fecha_actual)
+                if pd.isna(dt_val) or str(dt_val).strip() in ["", "NaT", "nan"]:
+                    continue
 
-                # Extraer caudal de la columna correspondiente de tu consulta
+                try:
+                    dt_parsed = pd.to_datetime(dt_val)
+                    h_num = dt_parsed.hour
+                    f_str = dt_parsed.strftime("%Y-%m-%d")
+                except:
+                    continue
+
+                if h_num > max_hora_cargada:
+                    max_hora_cargada = h_num
+
+                # Extraer caudal
                 val_caudal = row.get(
                     "Caudal_Distribución.1",
                     row.get(
@@ -195,7 +198,7 @@ if archivo_subido is not None:
                 except:
                     val_caudal = 12000.0
 
-                # Extraer niveles reales de tanques de tu plantilla
+                # Niveles de tanques
                 n_t1 = float(row.get("Nivel_Tk1_Planta", 200.0))
                 n_t2 = float(row.get("Nivel_Tk2_Planta", 200.0))
                 n_suc = float(row.get("Nivel_SuccionA_TkColinas", 250.0))
@@ -204,7 +207,7 @@ if archivo_subido is not None:
                 n_lom = float(row.get("Nivel_Tk_Lomas", 300.0))
                 n_car = float(row.get("Nivel_Carmelo", 250.0))
 
-                # Cálculo real del almacenamiento del sistema en base a los tanques
+                # Cálculo de almacenamiento del sistema
                 alc_sys = (
                     min(1.0, n_col / ALTURAS_MAXIMAS_TANQUES["Nivel_Colinas"])
                     * FACTORES_PONDERACION["Nivel_Colinas"]
@@ -247,7 +250,6 @@ if archivo_subido is not None:
                     "Nivel_SuccionA_TkColinas_cm": n_suc,
                     "Nivel_Tk_Lomas_cm": n_lom,
                     "Caudal_Real_m3h": val_caudal,
-                    # Presiones exactas de tu plantilla
                     "Presion_Ref_Red_Tk_Colinas": float(
                         row.get("Presion_Ref_Red_Tk_Colinas", 0.0)
                     ),
@@ -271,9 +273,7 @@ if archivo_subido is not None:
                     ),
                     "Pres_Blezo": float(row.get("Pres_Blezo", 0.0)),
                     "Presion_Chile": float(row.get("Presion_Chile", 0.0)),
-                    "Presion_Lomas": float(
-                        row.get("Presion_Lomas", 0.0)
-                    ),  # <--- Sector Tanque Lomas
+                    "Presion_Lomas": float(row.get("Presion_Lomas", 0.0)),
                     "Pres_Consulado": float(row.get("Pres_Consulado", 0.0)),
                     "Presion_Bgrande": float(row.get("Presion_Bgrande", 0.0)),
                     "Presion_Bgrande_Kra7": float(
@@ -308,6 +308,7 @@ if archivo_subido is not None:
                     "Estado_Operativo": "Normal / Seguro",
                 }
 
+                # Actualizar o insertar hora en el histórico
                 df_hist = df_hist[
                     ~(
                         (df_hist["Fecha"] == f_str)
@@ -317,18 +318,19 @@ if archivo_subido is not None:
                 df_hist = pd.concat(
                     [df_hist, pd.DataFrame([reg_temp])], ignore_index=True
                 )
+                registros_procesados += 1
 
             df_hist.to_csv(HISTORICO_FILE, index=False)
             st.sidebar.success(
-                "🚀 ¡Plantilla de consulta sincronizada con éxito al histórico!"
+                f"🚀 ¡Sincronizado! Se actualizaron {registros_procesados} registros acumulados (hasta las {horas_format.get(max_hora_cargada, f'{max_hora_cargada}:00')})."
             )
     except Exception as e:
-        st.sidebar.error(f"Error al leer tu plantilla: {e}")
+        st.sidebar.error(f"Error al leer tu consulta: {e}")
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("⏱️ Hora de Consulta Actual (Modo Manual)")
+st.sidebar.subheader("⏱️ Hora de Consulta Manual / Respaldo")
 hora_actual = st.sidebar.selectbox(
-    "Seleccione la hora del turno a registrar",
+    "Seleccione la hora de referencia",
     options=horas_dia,
     format_func=lambda x: horas_format[x],
     index=7,
@@ -418,184 +420,13 @@ df_curva_base["Caudal_Max_Ajustado"] = (
 )
 
 # ---------------------------------------------------------
-# 5. MÓDULO DE INGRESO MANUAL
-# ---------------------------------------------------------
-st.markdown(
-    f"### 📥 Registro Operativo — Fecha: {fecha_actual} | Hora: {horas_format[hora_actual]}"
-)
-
-col_ingreso1, col_ingreso2 = st.columns([2, 1])
-niveles_cm_ingresados = {}
-
-with col_ingreso1:
-    st.markdown("##### 📏 Lectura de Niveles en Tanques (cm)")
-    t_cols = st.columns(2)
-    idx = 0
-    for tanque, alt_max in ALTURAS_MAXIMAS_TANQUES.items():
-        pct_sugerido = (
-            df_curva_base[df_curva_base["Hora"] == hora_actual][
-                "Almacenamiento_Ideal_Pct"
-            ].values[0]
-            / 100.0
-        )
-        val_cm_sugerido = alt_max * pct_sugerido * 0.9
-
-        with t_cols[idx % 2]:
-            niveles_cm_ingresados[tanque] = st.number_input(
-                f"{tanque.replace('Nivel_', '')} (Máx: {alt_max:,.0f} cm)",
-                min_value=0.0,
-                max_value=alt_max * 1.1,
-                value=float(val_cm_sugerido),
-                step=1.0,
-                key=f"input_{tanque}",
-            )
-        idx += 1
-
-with col_ingreso2:
-    st.markdown("##### ⚡ Operación de Red")
-    caudal_distribucion_actual = st.number_input(
-        "Caudal Distribución Real ($m^3/h$)",
-        min_value=0.0,
-        max_value=30000.0,
-        value=float(
-            df_curva_base[df_curva_base["Hora"] == hora_actual][
-                "Caudal_Prom_Ajustado"
-            ].values[0]
-        ),
-        step=100.0,
-        key="input_caudal_real",
-    )
-
-    with st.expander(
-        "Desplegar Variables de Presión de la Consulta", expanded=False
-    ):
-        p_colinas = st.number_input("Presion_Ref_Red_Tk_Colinas", value=0.0)
-        p_sec10 = st.number_input("Presion_Sector10_Elevado_Colinas", value=0.0)
-        p_apozon = st.number_input("Presion_AA_Pozon", value=0.0)
-        p_bast = st.number_input("Presion_Sal_Booster_Asturias", value=0.0)
-        p_pzuela = st.number_input("PresBomb_Znorte_a_TkPzuela", value=0.0)
-        p_znorte = st.number_input("Presion_Ent_ZonaNorte", value=0.0)
-        p_pcanoas = st.number_input("Presion_Pcanoas", value=0.0)
-        p_blezo = st.number_input("Pres_Blezo", value=0.0)
-        p_chile = st.number_input("Presion_Chile", value=0.0)
-        p_lomas = st.number_input(
-            "Presion_Lomas", value=0.0
-        )  # <--- Tanque Lomas
-        p_consulado = st.number_input("Pres_Consulado", value=0.0)
-        p_bgrande = st.number_input("Presion_Bgrande", value=0.0)
-        p_bgrande7 = st.number_input("Presion_Bgrande_Kra7", value=0.0)
-        p_alcibia = st.number_input("Presion_Alcibia", value=0.0)
-        p_piepopa = st.number_input("Presion_Piepopa", value=0.0)
-        p_centro = st.number_input("Presion_Centro", value=0.0)
-        p_pic = st.number_input("Pres_Pic", value=0.0)
-        p_fpopa = st.number_input("Pres_FPOPA", value=0.0)
-        p_olaya = st.number_input("Presion_Olaya_Cjust", value=0.0)
-        p_fredonia = st.number_input("Presion_Fredonia", value=0.0)
-        p_victoria = st.number_input("Pres_Ref_Bombeo_LaVictoria", value=0.0)
-        p_mop = st.number_input("Pres_Mop", value=0.0)
-        p_royalco = st.number_input("Pres_Royalco", value=0.0)
-        p_bellavista = st.number_input(
-            "Presion_Bellavista_Agua_Potable", value=0.0
-        )
-        p_ebooster = st.number_input("Presion_Ent_Booster", value=0.0)
-        p_cerro = st.number_input("EBAP_1_OO_PIT_001.PV", value=0.0)
-
-    guardar_registro = st.button(
-        "💾 Guardar / Registrar Hora en Histórico", type="primary"
-    )
-
-# ---------------------------------------------------------
-# 6. CÁLCULOS TÉCNICOS Y VALIDACIÓN
-# ---------------------------------------------------------
-pct_almacenamiento_actual = 0.0
-for tanque, cm_val in niveles_cm_ingresados.items():
-    alt_max = ALTURAS_MAXIMAS_TANQUES[tanque]
-    peso = FACTORES_PONDERACION[tanque]
-    fraccion_tanque = min(1.0, cm_val / alt_max)
-    pct_almacenamiento_actual += fraccion_tanque * peso * 100.0
-
-fila_ref = df_curva_base[df_curva_base["Hora"] == hora_actual].iloc[0]
-c_min_permitido = fila_ref["Caudal_Min_Ajustado"]
-c_max_permitido = fila_ref["Caudal_Max_Ajustado"]
-almacenamiento_meta_hora = fila_ref["Almacenamiento_Ideal_Pct"]
-
-caudal_en_rango = (c_min_permitido <= caudal_distribucion_actual) and (
-    caudal_distribucion_actual <= c_max_permitido
-)
-estado_op_str = (
-    "Normal / Seguro"
-    if (almacenamiento_06am_pct >= META_AMANECER_PCT and caudal_en_rango)
-    else "Requiere Ajuste"
-)
-
-if guardar_registro:
-    df_hist = cargar_historico()
-    nuevo_registro = {
-        "Fecha": str(fecha_actual),
-        "Hora": f"{hora_actual:02d}:00",
-        "Produccion_Planta_m3d": produccion_planta_m3d,
-        "Almacenamiento_06am_Pct": almacenamiento_06am_pct,
-        "Nivel_Colinas_cm": niveles_cm_ingresados["Nivel_Colinas"],
-        "Nivel_Carmelo_cm": niveles_cm_ingresados["Nivel_Carmelo"],
-        "Nivel_Tk1_Planta_cm": niveles_cm_ingresados["Nivel_Tk1_Planta"],
-        "Nivel_Tk2_Planta_cm": niveles_cm_ingresados["Nivel_Tk2_Planta"],
-        "Nivel_TkNar2_cm": niveles_cm_ingresados["Nivel_TkNar2"],
-        "Nivel_SuccionA_TkColinas_cm": niveles_cm_ingresados[
-            "Nivel_SuccionA_TkColinas"
-        ],
-        "Nivel_Tk_Lomas_cm": niveles_cm_ingresados["Nivel_Tk_Lomas"],
-        "Caudal_Real_m3h": caudal_distribucion_actual,
-        "Presion_Ref_Red_Tk_Colinas": p_colinas,
-        "Presion_Sector10_Elevado_Colinas": p_sec10,
-        "Presion_AA_Pozon": p_apozon,
-        "Presion_Sal_Booster_Asturias": p_bast,
-        "PresBomb_Znorte_a_TkPzuela": p_pzuela,
-        "Presion_Ent_ZonaNorte": p_znorte,
-        "Presion_Pcanoas": p_pcanoas,
-        "Pres_Blezo": p_blezo,
-        "Presion_Chile": p_chile,
-        "Presion_Lomas": p_lomas,
-        "Pres_Consulado": p_consulado,
-        "Presion_Bgrande": p_bgrande,
-        "Presion_Bgrande_Kra7": p_bgrande7,
-        "Presion_Alcibia": p_alcibia,
-        "Presion_Piepopa": p_piepopa,
-        "Presion_Centro": p_centro,
-        "Pres_Pic": p_pic,
-        "Presion_FPOPA": p_fpopa,
-        "Presion_Olaya_Cjust": p_olaya,
-        "Presion_Fredonia": p_fredonia,
-        "Pres_Ref_Bombeo_LaVictoria": p_victoria,
-        "Pres_Mop": p_mop,
-        "Pres_Royalco": p_royalco,
-        "Presion_Bellavista_Agua_Potable": p_bellavista,
-        "Presion_Ent_Booster": p_ebooster,
-        "EBAP_1_OO_PIT_001.PV": p_cerro,
-        "Almacenamiento_Sistema_Pct": round(pct_almacenamiento_actual, 2),
-        "Estado_Operativo": estado_op_str,
-    }
-    df_hist = df_hist[
-        ~(
-            (df_hist["Fecha"] == str(fecha_actual))
-            & (df_hist["Hora"] == f"{hora_actual:02d}:00")
-        )
-    ]
-    df_hist = pd.concat(
-        [df_hist, pd.DataFrame([nuevo_registro])], ignore_index=True
-    )
-    df_hist.to_csv(HISTORICO_FILE, index=False)
-    st.success(
-        f"✅ ¡Registro guardado exitosamente en el histórico para el {fecha_actual} a las {horas_format[hora_actual]}!"
-    )
-
-# ---------------------------------------------------------
-# 7. CARGAR HISTÓRICO Y FILTRAR DÍA ACTUAL
+# 5. CARGAR HISTÓRICO Y FILTRAR DÍA ACTUAL
 # ---------------------------------------------------------
 df_hist_global = cargar_historico()
 df_dia_actual = df_hist_global[df_hist_global["Fecha"] == str(fecha_actual)]
 
 # ---------------------------------------------------------
-# 8. CÁLCULO INTELIGENTE DE RECOMENDACIÓN DE AJUSTE DE CAUDAL
+# 6. CÁLCULO INTELIGENTE DE RECOMENDACIÓN DE AJUSTE DE CAUDAL
 # ---------------------------------------------------------
 recomendacion_ajuste_texto = "🟢 Sistema operando dentro de los parámetros esperados para cumplir la meta del día."
 delta_caudal_sugerido = 0.0
@@ -629,7 +460,7 @@ if not df_dia_actual.empty:
         recomendacion_ajuste_texto = f"ℹ️ **Aviso Operativo (Corte {horas_format[ultima_H]}):** El almacenamiento está {exceso_pct:.1f}% por encima de la meta. Puede **incrementar el caudal de distribución hasta en {delta_caudal_sugerido:,.0f} m³/h** de forma segura."
 
 # ---------------------------------------------------------
-# 9. KPI'S Y RECOMENDACIÓN EJECUTIVA
+# 7. KPI'S Y RECOMENDACIÓN EJECUTIVA
 # ---------------------------------------------------------
 st.divider()
 st.subheader(
@@ -651,7 +482,7 @@ with kpi2:
     ultimo_alm_val = (
         df_dia_ordenado.iloc[-1]["Almacenamiento_Sistema_Pct"]
         if not df_dia_actual.empty
-        else pct_almacenamiento_actual
+        else 72.0
     )
     st.metric(
         label="💧 Almacenamiento Actual",
@@ -663,7 +494,7 @@ with kpi3:
     ultimo_caudal_val = (
         df_dia_ordenado.iloc[-1]["Caudal_Real_m3h"]
         if not df_dia_actual.empty
-        else caudal_distribucion_actual
+        else 12000.0
     )
     st.metric(
         label="⚡ Caudal Operando",
@@ -679,7 +510,7 @@ with kpi4:
     )
 
 # ---------------------------------------------------------
-# 10. DASHBOARD GRÁFICO DINÁMICO
+# 8. DASHBOARD GRÁFICO DINÁMICO ACUMULATIVO
 # ---------------------------------------------------------
 st.divider()
 st.subheader(
@@ -728,7 +559,7 @@ with tab_g1:
                 x=df_dia_ordenado["Hora_Int"],
                 y=df_dia_ordenado["Caudal_Real_m3h"],
                 mode="lines+markers",
-                name="Tendencia Real Transcurrida",
+                name="Tendencia Real Acumulada",
                 line=dict(color="#27ae60", width=3, shape="spline"),
                 marker=dict(size=8),
             )
@@ -796,7 +627,7 @@ with tab_g2:
                 x=df_dia_ordenado["Hora_Int"],
                 y=df_dia_ordenado["Almacenamiento_Sistema_Pct"],
                 mode="lines+markers",
-                name="Almacenamiento Real Transcurrido",
+                name="Almacenamiento Real Acumulado",
                 line=dict(color="#27ae60", width=3, shape="spline"),
                 marker=dict(size=8),
             )
@@ -883,7 +714,7 @@ with tab_g3:
         )
         st.plotly_chart(fig_p, use_container_width=True)
     else:
-        st.info("Carga tu plantilla para visualizar las curvas de presión.")
+        st.info("Carga tu consulta para visualizar las curvas de presión.")
 
 with tab_g4:
     st.markdown("### 📅 Calendario Histórico de Operación")
@@ -902,27 +733,3 @@ with tab_g4:
         st.dataframe(df_fecha_sel, use_container_width=True)
     else:
         st.info("Aún no hay fechas registradas en el archivo histórico.")
-
-# ---------------------------------------------------------
-# 11. DETALLE DE TANQUES
-# ---------------------------------------------------------
-st.divider()
-st.subheader("📋 Estado Actual de Niveles por Tanque (cm)")
-df_resumen_tanques = pd.DataFrame({
-    "Estación / Tanque": list(ALTURAS_MAXIMAS_TANQUES.keys()),
-    "Altura Máxima (cm)": list(ALTURAS_MAXIMAS_TANQUES.values()),
-    "Nivel Registrado (cm)": list(niveles_cm_ingresados.values()),
-})
-df_resumen_tanques["% Ocupación"] = (
-    df_resumen_tanques["Nivel Registrado (cm)"]
-    / df_resumen_tanques["Altura Máxima (cm)"]
-) * 100.0
-
-st.dataframe(
-    df_resumen_tanques.style.format({
-        "Altura Máxima (cm)": "{:,.1f}",
-        "Nivel Registrado (cm)": "{:,.1f}",
-        "% Ocupación": "{:.1f}%",
-    }),
-    use_container_width=True,
-)
