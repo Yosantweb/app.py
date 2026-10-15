@@ -32,7 +32,7 @@ st.markdown(
 )
 
 # ---------------------------------------------------------
-# 1. ARCHIVO HISTÓRICO PERSISTENTE (CSV CON AUTOCORRECCIÓN)
+# 1. ARCHIVO HISTÓRICO PERSISTENTE (CSV)
 # ---------------------------------------------------------
 HISTORICO_FILE = "historico_operativo_v2.csv"
 
@@ -62,7 +62,7 @@ def cargar_historico():
             "Pres_Blezo",
             "Presion_Chile",
             "Presion_Lomas",
-            "Pres_Consulado",
+            "Presion_Consulado",
             "Presion_Bgrande",
             "Presion_Bgrande_Kra7",
             "Presion_Alcibia",
@@ -82,7 +82,6 @@ def cargar_historico():
 # ---------------------------------------------------------
 # 2. PARÁMETROS FÍSICOS Y SECTORIZACIÓN
 # ---------------------------------------------------------
-# Factores de ponderación para PTAP Bosque
 FACTORES_BOSQUE = {
     "Nivel_Colinas_Tk2": 0.40,
     "Nivel_Carmelo": 0.15,
@@ -93,7 +92,6 @@ FACTORES_BOSQUE = {
     "Nivel_Tk_Lomas": 0.05,
 }
 
-# Parámetros Planta El Cerro
 AREA_CERRO_M2 = 1350.0
 VOLUMEN_MAX_CERRO_M3 = 6750.0
 NIVEL_MAX_CERRO_M = 4.8
@@ -186,7 +184,6 @@ if archivo_subido is not None:
                 if h_num is None:
                     continue
 
-                # Diccionario de valores para esta hora con limpieza de Nulls y negativos
                 dict_raw = dict(
                     zip(df_subido[col_var].astype(str).str.strip(), df_subido[h_col])
                 )
@@ -204,7 +201,6 @@ if archivo_subido is not None:
                     except:
                         return default
 
-                # Niveles Tanques Bosque (cm)
                 t1 = limpiar_val("Nivel_Tk1_Planta", 134.0)
                 t2 = limpiar_val("Nivel_Tk2_Planta", 141.0)
                 suc = limpiar_val("Nivel_SuccionA_TkColinas", 162.0)
@@ -213,7 +209,6 @@ if archivo_subido is not None:
                 lom = limpiar_val("Nivel_Tk_Lomas", 257.0)
                 car = limpiar_val("Nivel_Carmelo", 285.0)
 
-                # Cálculo de almacenamiento PTAP Bosque (%)
                 alc_bosque = (
                     min(1.0, col2 / 450.0) * FACTORES_BOSQUE["Nivel_Colinas_Tk2"]
                     + min(1.0, car / 400.0) * FACTORES_BOSQUE["Nivel_Carmelo"]
@@ -225,7 +220,6 @@ if archivo_subido is not None:
                 ) * 100.0
                 vol_bosque = (alc_bosque / 100.0) * 50000.0
 
-                # Planta El Cerro
                 nivel_cerro_m = limpiar_val("EBAP_1_TP_LIT_001.PV", 3.9)
                 vol_cerro = min(
                     VOLUMEN_MAX_CERRO_M3, nivel_cerro_m * AREA_CERRO_M2
@@ -263,7 +257,7 @@ if archivo_subido is not None:
                     "Pres_Blezo": limpiar_val("Pres_Blezo", 0.0),
                     "Presion_Chile": limpiar_val("Presion_Chile", 0.0),
                     "Presion_Lomas": limpiar_val("Presion_Lomas", 0.0),
-                    "Pres_Consulado": limpiar_val("Pres_Consulado", 0.0),
+                    "Presion_Consulado": limpiar_val("Presion_Consulado", 0.0),
                     "Presion_Bgrande": limpiar_val("Presion_Bgrande", 0.0),
                     "Presion_Bgrande_Kra7": limpiar_val(
                         "Presion_Bgrande_Kra7", 0.0
@@ -338,7 +332,6 @@ caudal_prom_ref = [p * produccion_planta_m3d for p in perfil_horario_prom]
 caudal_min_ref = [c * 0.85 for c in caudal_prom_ref]
 caudal_max_ref = [c * 1.15 for c in caudal_prom_ref]
 
-# Curva ideal de almacenamiento (llegando a la meta elegida a las 06:00 a.m.)
 almacenamiento_ideal_ref = [
     meta_amanecer_pct,
     78,
@@ -584,7 +577,6 @@ with tab2:
             ].values[0]
             proy_c = np.linspace(ultimo_c, val_final, len(horas_p))
             fig_c.add_trace(
-            defecto...
                 go.Scatter(
                     x=horas_p,
                     y=proy_c,
@@ -654,7 +646,6 @@ with tab3:
 with tab4:
     st.markdown("### 🗜️ Consulta de Presiones (Últimas 6 Horas)")
     if not df_dia_actual.empty:
-        # Tomar las últimas 6 horas registradas
         df_ultimas_6 = df_dia_ord.tail(6)
         cols_presiones = [
             c
