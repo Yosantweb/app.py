@@ -29,7 +29,7 @@ st.title(
     "💧 Sistema SCADA Operativo y Proyección — Aguas de Cartagena S.A. E.S.P."
 )
 st.markdown(
-    "Monitoreo avanzado, lectura automática de tu Plantilla de Carga, curvas suavizadas y control de presiones por horas."
+    "Monitoreo avanzado, integración de Tanque Lomas (`Presion_Lomas`), curvas suavizadas y control por horas."
 )
 
 # ---------------------------------------------------------
@@ -55,6 +55,7 @@ def cargar_historico():
             "Nivel_SuccionA_TkColinas_cm",
             "Nivel_Tk_Lomas_cm",
             "Caudal_Real_m3h",
+            # Variables de presión y sectores actualizadas (incluyendo Tanque Lomas)
             "Presion_Ref_Red_Tk_Colinas",
             "Presion_Sector10_Elevado_Colinas",
             "Presion_AA_Pozon",
@@ -64,7 +65,7 @@ def cargar_historico():
             "Presion_Pcanoas",
             "Pres_Blezo",
             "Presion_Chile",
-            "Presion_Lomas",
+            "Presion_Lomas",  # <--- Agregada sector Tanque Lomas
             "Pres_Consulado",
             "Presion_Bgrande",
             "Presion_Bgrande_Kra7",
@@ -72,12 +73,12 @@ def cargar_historico():
             "Presion_Piepopa",
             "Presion_Centro",
             "Pres_Pic",
-            "Pres_FPOPA",
+            "Presion_FPOPA",
             "Presion_Olaya_Cjust",
             "Presion_Fredonia",
             "Pres_Ref_Bombeo_LaVictoria",
             "Presion_Mop",
-            "Pres_Royalco",
+            "Presion_Royalco",
             "Presion_Bellavista_Agua_Potable",
             "Presion_Ent_Booster",
             "EBAP_1_OO_PIT_001.PV",
@@ -123,7 +124,7 @@ horas_format = {
 }
 
 # ---------------------------------------------------------
-# 3. PANEL LATERAL: PARÁMETROS Y CARGA DE TU PLANTILLA
+# 3. PANEL LATERAL: PARÁMETROS Y CARGA DE PLANTILLA
 # ---------------------------------------------------------
 st.sidebar.header("🎛️ Parámetros y Carga de Plantilla")
 
@@ -146,13 +147,11 @@ almacenamiento_06am_pct = st.sidebar.number_input(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📂 Cargar tu 'Plantilla de carga.xlsx'")
+st.sidebar.subheader("📂 Cargar tu Plantilla Excel/CSV")
 archivo_subido = st.sidebar.file_uploader(
-    "Sube tu archivo Excel con las horas de izquierda a derecha",
-    type=["xlsx", "csv"],
+    "Sube tu archivo con horas de izquierda a derecha", type=["xlsx", "csv"]
 )
 
-# Procesador inteligente de la plantilla con formato de variables en filas y horas en columnas
 if archivo_subido is not None:
     try:
         if archivo_subido.name.endswith(".csv"):
@@ -160,24 +159,18 @@ if archivo_subido is not None:
         else:
             df_subido = pd.read_excel(archivo_subido)
 
-        st.sidebar.success(
-            "✅ ¡Plantilla leída con éxito! Revisa el botón de sincronización abajo."
-        )
+        st.sidebar.success("✅ ¡Plantilla leída con éxito!")
 
         if st.sidebar.button(
             "⚡ Sincronizar Plantilla al Histórico", type="primary"
         ):
-            # Asumimos que la primera columna contiene los nombres de las variables
-            # y las demás columnas son las horas (ej. '07:00 a. m.', '08:00 a. m.', etc.)
             col_variable = df_subido.columns[0]
             cols_horas = [c for c in df_subido.columns if c != col_variable]
-
             df_hist = cargar_historico()
 
             for h_col in cols_horas:
-                # Extraer la hora numérica de la columna (ej. "07:00 a. m." -> 7)
                 h_str_lower = str(h_col).lower()
-                h_num = 7  # por defecto
+                h_num = 7
                 for h_i in range(24):
                     if (
                         f"{h_i:02d}" in h_str_lower
@@ -187,15 +180,12 @@ if archivo_subido is not None:
                         h_num = h_i
                         break
 
-                # Mapear valores de la columna de esta hora
                 dict_valores = dict(
                     zip(df_subido[col_variable], df_subido[h_col])
                 )
 
-                # Calcular almacenamiento estimado con los tanques leídos
                 alc_sys = 0.0
                 for t_key, t_max in ALTURAS_MAXIMAS_TANQUES.items():
-                    # Buscar coincidencia exacta o parcial en el excel
                     val_t = dict_valores.get(t_key, t_max * 0.7)
                     try:
                         val_t = float(val_t)
@@ -262,7 +252,7 @@ if archivo_subido is not None:
                     ),
                     "Presion_Lomas": float(
                         dict_valores.get("Presion_Lomas", 1.5)
-                    ),
+                    ),  # <--- Tanque Lomas
                     "Pres_Consulado": float(
                         dict_valores.get("Pres_Consulado", 1.9)
                     ),
@@ -294,9 +284,9 @@ if archivo_subido is not None:
                     "Pres_Ref_Bombeo_LaVictoria": float(
                         dict_valores.get("Pres_Ref_Bombeo_LaVictoria", 2.4)
                     ),
-                    "Pres_Mop": float(dict_valores.get("Pres_Mop", 1.9)),
-                    "Pres_Royalco": float(
-                        dict_valores.get("Pres_Royalco", 2.7)
+                    "Presion_Mop": float(dict_valores.get("Presion_Mop", 1.9)),
+                    "Presion_Royalco": float(
+                        dict_valores.get("Presion_Royalco", 2.7)
                     ),
                     "Presion_Bellavista_Agua_Potable": float(
                         dict_valores.get(
@@ -313,7 +303,6 @@ if archivo_subido is not None:
                     "Estado_Operativo": "Normal / Seguro",
                 }
 
-                # Eliminar si ya existe esa hora para actualizarla
                 df_hist = df_hist[
                     ~(
                         (df_hist["Fecha"] == str(fecha_actual))
@@ -326,12 +315,10 @@ if archivo_subido is not None:
 
             df_hist.to_csv(HISTORICO_FILE, index=False)
             st.sidebar.success(
-                "🚀 ¡Todas las horas de tu plantilla fueron sincronizadas al histórico con éxito!"
+                "🚀 ¡Plantilla sincronizada al histórico con éxito!"
             )
     except Exception as e:
-        st.sidebar.error(
-            f"Error al procesar la plantilla. Asegúrate de que el formato coincida: {e}"
-        )
+        st.sidebar.error(f"Error al procesar la plantilla: {e}")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("⏱️ Hora de Consulta Actual (Modo Manual)")
@@ -489,7 +476,9 @@ with col_ingreso2:
         p_pcanoas = st.number_input("Presion_Pcanoas", value=2.2)
         p_blezo = st.number_input("Pres_Blezo", value=3.0)
         p_chile = st.number_input("Presion_Chile", value=1.4)
-        p_lomas = st.number_input("Presion_Lomas", value=1.5)
+        p_lomas = st.number_input(
+            "Presion_Lomas", value=1.5
+        )  # <--- Tanque Lomas añadido
         p_consulado = st.number_input("Pres_Consulado", value=1.9)
         p_bgrande = st.number_input("Presion_Bgrande", value=1.4)
         p_bgrande7 = st.number_input("Presion_Bgrande_Kra7", value=1.4)
@@ -563,7 +552,7 @@ if guardar_registro:
         "Presion_Pcanoas": p_pcanoas,
         "Pres_Blezo": p_blezo,
         "Presion_Chile": p_chile,
-        "Presion_Lomas": p_lomas,
+        "Presion_Lomas": p_lomas,  # <--- Tanque Lomas
         "Pres_Consulado": p_consulado,
         "Presion_Bgrande": p_bgrande,
         "Presion_Bgrande_Kra7": p_bgrande7,
@@ -571,7 +560,7 @@ if guardar_registro:
         "Presion_Piepopa": p_piepopa,
         "Presion_Centro": p_centro,
         "Pres_Pic": p_pic,
-        "Presion_FPOPA": p_fpopa,
+        "Pres_FPOPA": p_fpopa,
         "Presion_Olaya_Cjust": p_olaya,
         "Presion_Fredonia": p_fredonia,
         "Pres_Ref_Bombeo_LaVictoria": p_victoria,
@@ -630,7 +619,9 @@ with kpi3:
     )
 
 with kpi4:
-    prom_presion = np.mean([p_colinas, p_sec10, p_blezo, p_pic, p_fpopa])
+    prom_presion = np.mean(
+        [p_colinas, p_sec10, p_blezo, p_lomas, p_pic, p_fpopa]
+    )
     st.metric(
         label="🗜️ Presión Promedio Red",
         value=f"{prom_presion:.1f} mca",
@@ -832,7 +823,9 @@ with tab_g2:
     st.plotly_chart(fig_s, use_container_width=True)
 
 with tab_g3:
-    st.markdown("### 🗜️ Tendencia Horaria de Presiones (Tu Plantilla - mca)")
+    st.markdown(
+        "### 🗜️ Tendencia Horaria de Presiones (Tu Plantilla - mca)"
+    )
     if not df_dia_actual.empty:
         fig_p = go.Figure()
         df_p_ord = df_dia_actual.copy()
