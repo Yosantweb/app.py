@@ -29,7 +29,7 @@ st.title(
     "💧 Sistema SCADA Operativo y Proyección — Aguas de Cartagena S.A. E.S.P."
 )
 st.markdown(
-    "Monitoreo avanzado, carga externa de plantillas, curvas suavizadas, calendario histórico y control de presiones por horas."
+    "Monitoreo avanzado, lectura automática de tu Plantilla de Carga, curvas suavizadas y control de presiones por horas."
 )
 
 # ---------------------------------------------------------
@@ -57,25 +57,30 @@ def cargar_historico():
             "Caudal_Real_m3h",
             "Presion_Ref_Red_Tk_Colinas",
             "Presion_Sector10_Elevado_Colinas",
-            "PresBomb_Znnorte_a_TkPzuela",
+            "Presion_AA_Pozon",
+            "Presion_Sal_Booster_Asturias",
+            "PresBomb_Znorte_a_TkPzuela",
             "Presion_Ent_ZonaNorte",
             "Presion_Pcanoas",
             "Pres_Blezo",
             "Presion_Chile",
+            "Presion_Lomas",
             "Pres_Consulado",
             "Presion_Bgrande",
             "Presion_Bgrande_Kra7",
             "Presion_Alcibia",
             "Presion_Piepopa",
+            "Presion_Centro",
             "Pres_Pic",
             "Pres_FPOPA",
             "Presion_Olaya_Cjust",
             "Presion_Fredonia",
             "Pres_Ref_Bombeo_LaVictoria",
-            "Pres_Mop",
+            "Presion_Mop",
             "Pres_Royalco",
             "Presion_Bellavista_Agua_Potable",
-            "Presión_Salida_EBAP_CERRO",
+            "Presion_Ent_Booster",
+            "EBAP_1_OO_PIT_001.PV",
             "Almacenamiento_Sistema_Pct",
             "Estado_Operativo",
         ])
@@ -118,9 +123,9 @@ horas_format = {
 }
 
 # ---------------------------------------------------------
-# 3. PANEL LATERAL: PARÁMETROS Y CARGA DE DOCUMENTO EXTERNO
+# 3. PANEL LATERAL: PARÁMETROS Y CARGA DE TU PLANTILLA
 # ---------------------------------------------------------
-st.sidebar.header("🎛️ Parámetros y Carga Externa")
+st.sidebar.header("🎛️ Parámetros y Carga de Plantilla")
 
 fecha_actual = st.sidebar.date_input(
     "Fecha de Operación", value=datetime.today()
@@ -141,27 +146,195 @@ almacenamiento_06am_pct = st.sidebar.number_input(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📂 Cargar Plantilla Externa (Excel / CSV)")
+st.sidebar.subheader("📂 Cargar tu 'Plantilla de carga.xlsx'")
 archivo_subido = st.sidebar.file_uploader(
-    "Sube tu archivo con los datos del día", type=["csv", "xlsx"]
+    "Sube tu archivo Excel con las horas de izquierda a derecha",
+    type=["xlsx", "csv"],
 )
 
-# Procesar archivo externo si se carga
-df_externo = None
+# Procesador inteligente de la plantilla con formato de variables en filas y horas en columnas
 if archivo_subido is not None:
     try:
         if archivo_subido.name.endswith(".csv"):
-            df_externo = pd.read_csv(archivo_subido)
+            df_subido = pd.read_csv(archivo_subido)
         else:
-            df_externo = pd.read_excel(archivo_subido)
+            df_subido = pd.read_excel(archivo_subido)
+
         st.sidebar.success(
-            "✅ ¡Plantilla externa cargada con éxito! Puedes sincronizarla abajo."
+            "✅ ¡Plantilla leída con éxito! Revisa el botón de sincronización abajo."
         )
+
+        if st.sidebar.button(
+            "⚡ Sincronizar Plantilla al Histórico", type="primary"
+        ):
+            # Asumimos que la primera columna contiene los nombres de las variables
+            # y las demás columnas son las horas (ej. '07:00 a. m.', '08:00 a. m.', etc.)
+            col_variable = df_subido.columns[0]
+            cols_horas = [c for c in df_subido.columns if c != col_variable]
+
+            df_hist = cargar_historico()
+
+            for h_col in cols_horas:
+                # Extraer la hora numérica de la columna (ej. "07:00 a. m." -> 7)
+                h_str_lower = str(h_col).lower()
+                h_num = 7  # por defecto
+                for h_i in range(24):
+                    if (
+                        f"{h_i:02d}" in h_str_lower
+                        or f"{h_i}:" in h_str_lower
+                        or (h_i == 0 and "12" in h_str_lower)
+                    ):
+                        h_num = h_i
+                        break
+
+                # Mapear valores de la columna de esta hora
+                dict_valores = dict(
+                    zip(df_subido[col_variable], df_subido[h_col])
+                )
+
+                # Calcular almacenamiento estimado con los tanques leídos
+                alc_sys = 0.0
+                for t_key, t_max in ALTURAS_MAXIMAS_TANQUES.items():
+                    # Buscar coincidencia exacta o parcial en el excel
+                    val_t = dict_valores.get(t_key, t_max * 0.7)
+                    try:
+                        val_t = float(val_t)
+                    except:
+                        val_t = t_max * 0.7
+                    frac = min(1.0, val_t / t_max)
+                    alc_sys += frac * FACTORES_PONDERACION[t_key] * 100.0
+
+                reg_temp = {
+                    "Fecha": str(fecha_actual),
+                    "Hora": f"{h_num:02d}:00",
+                    "Produccion_Planta_m3d": produccion_planta_m3d,
+                    "Almacenamiento_06am_Pct": almacenamiento_06am_pct,
+                    "Nivel_Colinas_cm": float(
+                        dict_valores.get("Nivel_Colinas_Tk2", 300.0)
+                    ),
+                    "Nivel_Carmelo_cm": float(
+                        dict_valores.get("Nivel_Carmelo", 250.0)
+                    ),
+                    "Nivel_Tk1_Planta_cm": float(
+                        dict_valores.get("Nivel_Tk1_Planta", 200.0)
+                    ),
+                    "Nivel_Tk2_Planta_cm": float(
+                        dict_valores.get("Nivel_Tk2_Planta", 200.0)
+                    ),
+                    "Nivel_TkNar2_cm": float(
+                        dict_valores.get("Nivel_TkNar2", 350.0)
+                    ),
+                    "Nivel_SuccionA_TkColinas_cm": float(
+                        dict_valores.get("Nivel_SuccionA_TkColinas", 250.0)
+                    ),
+                    "Nivel_Tk_Lomas_cm": float(
+                        dict_valores.get("Nivel_Tk_Lomas", 300.0)
+                    ),
+                    "Caudal_Real_m3h": float(
+                        dict_valores.get("Caudal_Distribución", 12000.0)
+                    ),
+                    "Presion_Ref_Red_Tk_Colinas": float(
+                        dict_valores.get("Presion_Ref_Red_Tk_Colinas", 0.9)
+                    ),
+                    "Presion_Sector10_Elevado_Colinas": float(
+                        dict_valores.get(
+                            "Presion_Sector10_Elevado_Colinas", 1.6
+                        )
+                    ),
+                    "Presion_AA_Pozon": float(
+                        dict_valores.get("Presion_AA_Pozon", 1.0)
+                    ),
+                    "Presion_Sal_Booster_Asturias": float(
+                        dict_valores.get("Presion_Sal_Booster_Asturias", 1.0)
+                    ),
+                    "PresBomb_Znorte_a_TkPzuela": float(
+                        dict_valores.get("PresBomb_Znorte_a_TkPzuela", 7.4)
+                    ),
+                    "Presion_Ent_ZonaNorte": float(
+                        dict_valores.get("Presion_Ent_ZonaNorte", 1.4)
+                    ),
+                    "Presion_Pcanoas": float(
+                        dict_valores.get("Presion_Pcanoas", 2.2)
+                    ),
+                    "Pres_Blezo": float(dict_valores.get("Pres_Blezo", 3.0)),
+                    "Presion_Chile": float(
+                        dict_valores.get("Presion_Chile", 1.4)
+                    ),
+                    "Presion_Lomas": float(
+                        dict_valores.get("Presion_Lomas", 1.5)
+                    ),
+                    "Pres_Consulado": float(
+                        dict_valores.get("Pres_Consulado", 1.9)
+                    ),
+                    "Presion_Bgrande": float(
+                        dict_valores.get("Presion_Bgrande", 1.4)
+                    ),
+                    "Presion_Bgrande_Kra7": float(
+                        dict_valores.get("Presion_Bgrande_Kra7", 1.4)
+                    ),
+                    "Presion_Alcibia": float(
+                        dict_valores.get("Presion_Alcibia", 1.4)
+                    ),
+                    "Presion_Piepopa": float(
+                        dict_valores.get("Presion_Piepopa", 1.7)
+                    ),
+                    "Presion_Centro": float(
+                        dict_valores.get("Presion_Centro", 1.8)
+                    ),
+                    "Pres_Pic": float(dict_valores.get("Pres_Pic", 1.8)),
+                    "Presion_FPOPA": float(
+                        dict_valores.get("Presion_FPOPA", 7.8)
+                    ),
+                    "Presion_Olaya_Cjust": float(
+                        dict_valores.get("Presion_Olaya_Cjust", 2.6)
+                    ),
+                    "Presion_Fredonia": float(
+                        dict_valores.get("Presion_Fredonia", 1.0)
+                    ),
+                    "Pres_Ref_Bombeo_LaVictoria": float(
+                        dict_valores.get("Pres_Ref_Bombeo_LaVictoria", 2.4)
+                    ),
+                    "Pres_Mop": float(dict_valores.get("Pres_Mop", 1.9)),
+                    "Pres_Royalco": float(
+                        dict_valores.get("Pres_Royalco", 2.7)
+                    ),
+                    "Presion_Bellavista_Agua_Potable": float(
+                        dict_valores.get(
+                            "Presion_Bellavista_Agua_Potable", 1.5
+                        )
+                    ),
+                    "Presion_Ent_Booster": float(
+                        dict_valores.get("Presion_Ent_Booster", 1.2)
+                    ),
+                    "EBAP_1_OO_PIT_001.PV": float(
+                        dict_valores.get("EBAP_1_OO_PIT_001.PV", 5.4)
+                    ),
+                    "Almacenamiento_Sistema_Pct": round(alc_sys, 2),
+                    "Estado_Operativo": "Normal / Seguro",
+                }
+
+                # Eliminar si ya existe esa hora para actualizarla
+                df_hist = df_hist[
+                    ~(
+                        (df_hist["Fecha"] == str(fecha_actual))
+                        & (df_hist["Hora"] == f"{h_num:02d}:00")
+                    )
+                ]
+                df_hist = pd.concat(
+                    [df_hist, pd.DataFrame([reg_temp])], ignore_index=True
+                )
+
+            df_hist.to_csv(HISTORICO_FILE, index=False)
+            st.sidebar.success(
+                "🚀 ¡Todas las horas de tu plantilla fueron sincronizadas al histórico con éxito!"
+            )
     except Exception as e:
-        st.sidebar.error(f"Error al leer el archivo: {e}")
+        st.sidebar.error(
+            f"Error al procesar la plantilla. Asegúrate de que el formato coincida: {e}"
+        )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("⏱️ Hora de Consulta Actual")
+st.sidebar.subheader("⏱️ Hora de Consulta Actual (Modo Manual)")
 hora_actual = st.sidebar.selectbox(
     "Seleccione la hora del turno a registrar",
     options=horas_dia,
@@ -253,35 +426,13 @@ df_curva_base["Caudal_Max_Ajustado"] = (
 )
 
 # ---------------------------------------------------------
-# 5. MÓDULO DE INGRESO OPERATIVO (MANUAL O CARGA EXTERNA MASIVA)
+# 5. MÓDULO DE INGRESO OPERATIVO MANUAL
 # ---------------------------------------------------------
 st.markdown(
     f"### 📥 Registro Operativo — Fecha: {fecha_actual} | Hora: {horas_format[hora_actual]}"
 )
 
-# Opción de volcado masivo si hay archivo externo cargado
-if df_externo is not None:
-    if st.button(
-        "⚡ Volcar y Sincronizar Todo el Archivo Externo al Histórico del Día",
-        type="secondary",
-    ):
-        try:
-            df_hist = cargar_historico()
-            # Aseguramos formato estándar en las columnas del archivo externo antes de volcarlo
-            df_hist = pd.concat(
-                [df_hist, df_externo], ignore_index=True
-            ).drop_duplicates(subset=["Fecha", "Hora"], keep="last")
-            df_hist.to_csv(HISTORICO_FILE, index=False)
-            st.success(
-                "✅ ¡Todos los registros del archivo externo fueron volcados e integrados al histórico exitosamente!"
-            )
-        except Exception as e:
-            st.error(
-                f"Error al procesar el volcado masivo. Verifica que las columnas coincidan: {e}"
-            )
-
 col_ingreso1, col_ingreso2 = st.columns([2, 1])
-
 niveles_cm_ingresados = {}
 
 with col_ingreso1:
@@ -327,131 +478,36 @@ with col_ingreso2:
         f"##### 🗜️ Control de Presiones (mca) — {horas_format[hora_actual]}"
     )
     with st.expander(
-        "Desplegar Variables de Presión por Sistema", expanded=True
+        "Desplegar Variables de Presión de tu Plantilla", expanded=False
     ):
-        p_colinas = st.number_input(
-            "Presion_Ref_Red_Tk_Colinas",
-            min_value=0.0,
-            max_value=50.0,
-            value=0.9,
-            step=0.1,
-        )
-        p_sec10 = st.number_input(
-            "Presion_Sector10_Elevado_Colinas",
-            min_value=0.0,
-            max_value=50.0,
-            value=1.6,
-            step=0.1,
-        )
-        p_pzuela = st.number_input(
-            "PresBomb_Znnorte_a_TkPzuela",
-            min_value=0.0,
-            max_value=50.0,
-            value=7.4,
-            step=0.1,
-        )
-        p_znorte = st.number_input(
-            "Presion_Ent_ZonaNorte",
-            min_value=0.0,
-            max_value=50.0,
-            value=1.4,
-            step=0.1,
-        )
-        p_pcanoas = st.number_input(
-            "Presion_Pcanoas",
-            min_value=0.0,
-            max_value=50.0,
-            value=2.2,
-            step=0.1,
-        )
-        p_blezo = st.number_input(
-            "Pres_Blezo", min_value=0.0, max_value=50.0, value=3.0, step=0.1
-        )
-        p_chile = st.number_input(
-            "Presion_Chile", min_value=0.0, max_value=50.0, value=1.4, step=0.1
-        )
-        p_consulado = st.number_input(
-            "Pres_Consulado",
-            min_value=0.0,
-            max_value=50.0,
-            value=1.9,
-            step=0.1,
-        )
-        p_bgrande = st.number_input(
-            "Presion_Bgrande",
-            min_value=0.0,
-            max_value=50.0,
-            value=1.4,
-            step=0.1,
-        )
-        p_bgrande7 = st.number_input(
-            "Presion_Bgrande_Kra7",
-            min_value=0.0,
-            max_value=50.0,
-            value=1.4,
-            step=0.1,
-        )
-        p_alcibia = st.number_input(
-            "Presion_Alcibia",
-            min_value=0.0,
-            max_value=50.0,
-            value=1.4,
-            step=0.1,
-        )
-        p_piepopa = st.number_input(
-            "Presion_Piepopa",
-            min_value=0.0,
-            max_value=50.0,
-            value=1.7,
-            step=0.1,
-        )
-        p_pic = st.number_input(
-            "Pres_Pic", min_value=0.0, max_value=50.0, value=1.8, step=0.1
-        )
-        p_fpopa = st.number_input(
-            "Pres_FPOPA", min_value=0.0, max_value=50.0, value=7.8, step=0.1
-        )
-        p_olaya = st.number_input(
-            "Presion_Olaya_Cjust",
-            min_value=0.0,
-            max_value=50.0,
-            value=2.6,
-            step=0.1,
-        )
-        p_fredonia = st.number_input(
-            "Presion_Fredonia",
-            min_value=0.0,
-            max_value=50.0,
-            value=1.0,
-            step=0.1,
-        )
-        p_victoria = st.number_input(
-            "Pres_Ref_Bombeo_LaVictoria",
-            min_value=0.0,
-            max_value=50.0,
-            value=2.4,
-            step=0.1,
-        )
-        p_mop = st.number_input(
-            "Pres_Mop", min_value=0.0, max_value=50.0, value=1.9, step=0.1
-        )
-        p_royalco = st.number_input(
-            "Pres_Royalco", min_value=0.0, max_value=50.0, value=2.7, step=0.1
-        )
+        p_colinas = st.number_input("Presion_Ref_Red_Tk_Colinas", value=0.9)
+        p_sec10 = st.number_input("Presion_Sector10_Elevado_Colinas", value=1.6)
+        p_apozon = st.number_input("Presion_AA_Pozon", value=1.0)
+        p_bast = st.number_input("Presion_Sal_Booster_Asturias", value=1.0)
+        p_pzuela = st.number_input("PresBomb_Znorte_a_TkPzuela", value=7.4)
+        p_znorte = st.number_input("Presion_Ent_ZonaNorte", value=1.4)
+        p_pcanoas = st.number_input("Presion_Pcanoas", value=2.2)
+        p_blezo = st.number_input("Pres_Blezo", value=3.0)
+        p_chile = st.number_input("Presion_Chile", value=1.4)
+        p_lomas = st.number_input("Presion_Lomas", value=1.5)
+        p_consulado = st.number_input("Pres_Consulado", value=1.9)
+        p_bgrande = st.number_input("Presion_Bgrande", value=1.4)
+        p_bgrande7 = st.number_input("Presion_Bgrande_Kra7", value=1.4)
+        p_alcibia = st.number_input("Presion_Alcibia", value=1.4)
+        p_piepopa = st.number_input("Presion_Piepopa", value=1.7)
+        p_centro = st.number_input("Presion_Centro", value=1.8)
+        p_pic = st.number_input("Pres_Pic", value=1.8)
+        p_fpopa = st.number_input("Pres_FPOPA", value=7.8)
+        p_olaya = st.number_input("Presion_Olaya_Cjust", value=2.6)
+        p_fredonia = st.number_input("Presion_Fredonia", value=1.0)
+        p_victoria = st.number_input("Pres_Ref_Bombeo_LaVictoria", value=2.4)
+        p_mop = st.number_input("Pres_Mop", value=1.9)
+        p_royalco = st.number_input("Pres_Royalco", value=2.7)
         p_bellavista = st.number_input(
-            "Presion_Bellavista_Agua_Potable",
-            min_value=0.0,
-            max_value=50.0,
-            value=1.5,
-            step=0.1,
+            "Presion_Bellavista_Agua_Potable", value=1.5
         )
-        p_cerro = st.number_input(
-            "Presión Salida EBAP CERRO",
-            min_value=0.0,
-            max_value=50.0,
-            value=5.4,
-            step=0.1,
-        )
+        p_ebooster = st.number_input("Presion_Ent_Booster", value=1.2)
+        p_cerro = st.number_input("EBAP_1_OO_PIT_001.PV", value=5.4)
 
     guardar_registro = st.button(
         "💾 Guardar / Registrar Hora en Histórico", type="primary"
@@ -500,25 +556,30 @@ if guardar_registro:
         "Caudal_Real_m3h": caudal_distribucion_actual,
         "Presion_Ref_Red_Tk_Colinas": p_colinas,
         "Presion_Sector10_Elevado_Colinas": p_sec10,
-        "PresBomb_Znnorte_a_TkPzuela": p_pzuela,
+        "Presion_AA_Pozon": p_apozon,
+        "Presion_Sal_Booster_Asturias": p_bast,
+        "PresBomb_Znorte_a_TkPzuela": p_pzuela,
         "Presion_Ent_ZonaNorte": p_znorte,
         "Presion_Pcanoas": p_pcanoas,
         "Pres_Blezo": p_blezo,
         "Presion_Chile": p_chile,
+        "Presion_Lomas": p_lomas,
         "Pres_Consulado": p_consulado,
         "Presion_Bgrande": p_bgrande,
         "Presion_Bgrande_Kra7": p_bgrande7,
         "Presion_Alcibia": p_alcibia,
         "Presion_Piepopa": p_piepopa,
+        "Presion_Centro": p_centro,
         "Pres_Pic": p_pic,
-        "Pres_FPOPA": p_fpopa,
+        "Presion_FPOPA": p_fpopa,
         "Presion_Olaya_Cjust": p_olaya,
         "Presion_Fredonia": p_fredonia,
         "Pres_Ref_Bombeo_LaVictoria": p_victoria,
         "Pres_Mop": p_mop,
         "Pres_Royalco": p_royalco,
         "Presion_Bellavista_Agua_Potable": p_bellavista,
-        "Presión_Salida_EBAP_CERRO": p_cerro,
+        "Presion_Ent_Booster": p_ebooster,
+        "EBAP_1_OO_PIT_001.PV": p_cerro,
         "Almacenamiento_Sistema_Pct": round(pct_almacenamiento_actual, 2),
         "Estado_Operativo": estado_op_str,
     }
@@ -569,9 +630,7 @@ with kpi3:
     )
 
 with kpi4:
-    prom_presion = np.mean(
-        [p_colinas, p_sec10, p_pzuela, p_blezo, p_pic, p_cerro]
-    )
+    prom_presion = np.mean([p_colinas, p_sec10, p_blezo, p_pic, p_fpopa])
     st.metric(
         label="🗜️ Presión Promedio Red",
         value=f"{prom_presion:.1f} mca",
@@ -589,7 +648,7 @@ st.subheader(
 tab_g1, tab_g2, tab_g3, tab_g4 = st.tabs([
     "⚡ Tendencia y Proyección Caudal",
     "💧 Tendencia y Proyección Almacenamiento",
-    "🗜️ Tendencia de Presiones (Plantilla SCADA)",
+    "🗜️ Tendencia de Presiones (Plantilla)",
     "📅 Calendario Histórico",
 ])
 
@@ -773,9 +832,7 @@ with tab_g2:
     st.plotly_chart(fig_s, use_container_width=True)
 
 with tab_g3:
-    st.markdown(
-        "### 🗜️ Tendencia Horaria de Presiones (Plantilla SCADA - mca)"
-    )
+    st.markdown("### 🗜️ Tendencia Horaria de Presiones (Tu Plantilla - mca)")
     if not df_dia_actual.empty:
         fig_p = go.Figure()
         df_p_ord = df_dia_actual.copy()
@@ -785,7 +842,9 @@ with tab_g3:
         df_p_ord = df_p_ord.sort_values("Hora_Int")
 
         columnas_presiones = [
-            c for c in df_p_ord.columns if "Pres" in c or "Presión" in c
+            c
+            for c in df_p_ord.columns
+            if "Pres" in c or "EBAP" in c or "Presión" in c
         ]
         for col_p in columnas_presiones:
             fig_p.add_trace(
@@ -811,7 +870,7 @@ with tab_g3:
         st.plotly_chart(fig_p, use_container_width=True)
     else:
         st.info(
-            "Registra al menos una hora en el histórico para visualizar las curvas de presión de la plantilla."
+            "Carga tu plantilla o registra horas para visualizar las curvas de presión."
         )
 
 with tab_g4:
