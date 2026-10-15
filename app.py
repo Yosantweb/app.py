@@ -29,7 +29,7 @@ st.title(
     "💧 Sistema SCADA Operativo y Proyección — Aguas de Cartagena S.A. E.S.P."
 )
 st.markdown(
-    "Monitoreo avanzado, integración de Tanque Lomas (`Presion_Lomas`), curvas suavizadas y control por horas."
+    "Monitoreo avanzado, lectura inteligente de tu plantilla SCADA, Tanque Lomas, curvas suavizadas y recomendación de ajuste."
 )
 
 # ---------------------------------------------------------
@@ -55,7 +55,7 @@ def cargar_historico():
             "Nivel_SuccionA_TkColinas_cm",
             "Nivel_Tk_Lomas_cm",
             "Caudal_Real_m3h",
-            # Variables de presión y sectores actualizadas (incluyendo Tanque Lomas)
+            # Variables de presión y sectores (incluyendo Presion_Lomas)
             "Presion_Ref_Red_Tk_Colinas",
             "Presion_Sector10_Elevado_Colinas",
             "Presion_AA_Pozon",
@@ -65,7 +65,7 @@ def cargar_historico():
             "Presion_Pcanoas",
             "Pres_Blezo",
             "Presion_Chile",
-            "Presion_Lomas",  # <--- Agregada sector Tanque Lomas
+            "Presion_Lomas",
             "Pres_Consulado",
             "Presion_Bgrande",
             "Presion_Bgrande_Kra7",
@@ -124,7 +124,7 @@ horas_format = {
 }
 
 # ---------------------------------------------------------
-# 3. PANEL LATERAL: PARÁMETROS Y CARGA DE PLANTILLA
+# 3. PANEL LATERAL: PARÁMETROS Y CARGA DE PLANTILLA SCADA
 # ---------------------------------------------------------
 st.sidebar.header("🎛️ Parámetros y Carga de Plantilla")
 
@@ -147,9 +147,10 @@ almacenamiento_06am_pct = st.sidebar.number_input(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📂 Cargar tu Plantilla Excel/CSV")
+st.sidebar.subheader("📂 Cargar Plantilla de Datos (Excel / CSV)")
 archivo_subido = st.sidebar.file_uploader(
-    "Sube tu archivo con horas de izquierda a derecha", type=["xlsx", "csv"]
+    "Sube tu archivo con filas por hora y columnas por variable",
+    type=["xlsx", "csv"],
 )
 
 if archivo_subido is not None:
@@ -159,153 +160,161 @@ if archivo_subido is not None:
         else:
             df_subido = pd.read_excel(archivo_subido)
 
-        st.sidebar.success("✅ ¡Plantilla leída con éxito!")
+        st.sidebar.success(
+            "✅ ¡Plantilla leída con éxito! Haz clic en sincronizar."
+        )
 
         if st.sidebar.button(
-            "⚡ Sincronizar Plantilla al Histórico", type="primary"
+            "⚡ Sincronizar Plantilla al Histórico del Día", type="primary"
         ):
-            col_variable = df_subido.columns[0]
-            cols_horas = [c for c in df_subido.columns if c != col_variable]
             df_hist = cargar_historico()
 
-            for h_col in cols_horas:
-                h_str_lower = str(h_col).lower()
-                h_num = 7
-                for h_i in range(24):
-                    if (
-                        f"{h_i:02d}" in h_str_lower
-                        or f"{h_i}:" in h_str_lower
-                        or (h_i == 0 and "12" in h_str_lower)
-                    ):
-                        h_num = h_i
-                        break
-
-                dict_valores = dict(
-                    zip(df_subido[col_variable], df_subido[h_col])
-                )
-
-                alc_sys = 0.0
-                for t_key, t_max in ALTURAS_MAXIMAS_TANQUES.items():
-                    val_t = dict_valores.get(t_key, t_max * 0.7)
+            # Procesar fila por fila (cada fila es una hora)
+            for idx, row in df_subido.iterrows():
+                # Extraer la hora del campo DateTime o similar
+                dt_val = row.get("DateTime", row.get("Fecha", None))
+                if pd.notna(dt_val):
                     try:
-                        val_t = float(val_t)
+                        dt_parsed = pd.to_datetime(dt_val)
+                        h_num = dt_parsed.hour
+                        f_str = dt_parsed.strftime("%Y-%m-%d")
                     except:
-                        val_t = t_max * 0.7
-                    frac = min(1.0, val_t / t_max)
-                    alc_sys += frac * FACTORES_PONDERACION[t_key] * 100.0
+                        h_num = idx % 24
+                        f_str = str(fecha_actual)
+                else:
+                    h_num = idx % 24
+                    f_str = str(fecha_actual)
+
+                # Obtener caudal real (buscando en nombres comunes de columnas)
+                val_caudal = row.get(
+                    "Caudal_Distribución.1",
+                    row.get(
+                        "Caudal_Real_m3h",
+                        row.get("Caudal_Distribución", 12000.0),
+                    ),
+                )
+                try:
+                    val_caudal = float(val_caudal)
+                except:
+                    val_caudal = 12000.0
+
+                # Obtener niveles de tanques
+                n_c2 = float(row.get("Nivel_Colinas_Tk2", 300.0))
+                n_car = float(row.get("Nivel_Carmelo", 250.0))
+                n_t1 = float(row.get("Nivel_Tk1_Planta", 200.0))
+                n_t2 = float(row.get("Nivel_Tk2_Planta", 200.0))
+                n_tn2 = float(row.get("Nivel_TkNar2", 350.0))
+                n_suc = float(row.get("Nivel_SuccionA_TkColinas", 250.0))
+                n_lom = float(row.get("Nivel_Tk_Lomas", 300.0))
+
+                # Calcular almacenamiento del sistema con estos tanques
+                alc_sys = (
+                    min(1.0, n_c2 / ALTURAS_MAXIMAS_TANQUES["Nivel_Colinas"])
+                    * FACTORES_PONDERACION["Nivel_Colinas"]
+                    + min(
+                        1.0, n_car / ALTURAS_MAXIMAS_TANQUES["Nivel_Carmelo"]
+                    )
+                    * FACTORES_PONDERACION["Nivel_Carmelo"]
+                    + min(
+                        1.0, n_t1 / ALTURAS_MAXIMAS_TANQUES["Nivel_Tk1_Planta"]
+                    )
+                    * FACTORES_PONDERACION["Nivel_Tk1_Planta"]
+                    + min(
+                        1.0, n_t2 / ALTURAS_MAXIMAS_TANQUES["Nivel_Tk2_Planta"]
+                    )
+                    * FACTORES_PONDERACION["Nivel_Tk2_Planta"]
+                    + min(
+                        1.0, n_tn2 / ALTURAS_MAXIMAS_TANQUES["Nivel_TkNar2"]
+                    )
+                    * FACTORES_PONDERACION["Nivel_TkNar2"]
+                    + min(
+                        1.0,
+                        n_suc
+                        / ALTURAS_MAXIMAS_TANQUES["Nivel_SuccionA_TkColinas"],
+                    )
+                    * FACTORES_PONDERACION["Nivel_SuccionA_TkColinas"]
+                    + min(1.0, n_lom / ALTURAS_MAXIMAS_TANQUES["Nivel_Tk_Lomas"])
+                    * FACTORES_PONDERACION["Nivel_Tk_Lomas"]
+                ) * 100.0
 
                 reg_temp = {
-                    "Fecha": str(fecha_actual),
+                    "Fecha": f_str,
                     "Hora": f"{h_num:02d}:00",
                     "Produccion_Planta_m3d": produccion_planta_m3d,
                     "Almacenamiento_06am_Pct": almacenamiento_06am_pct,
-                    "Nivel_Colinas_cm": float(
-                        dict_valores.get("Nivel_Colinas_Tk2", 300.0)
-                    ),
-                    "Nivel_Carmelo_cm": float(
-                        dict_valores.get("Nivel_Carmelo", 250.0)
-                    ),
-                    "Nivel_Tk1_Planta_cm": float(
-                        dict_valores.get("Nivel_Tk1_Planta", 200.0)
-                    ),
-                    "Nivel_Tk2_Planta_cm": float(
-                        dict_valores.get("Nivel_Tk2_Planta", 200.0)
-                    ),
-                    "Nivel_TkNar2_cm": float(
-                        dict_valores.get("Nivel_TkNar2", 350.0)
-                    ),
-                    "Nivel_SuccionA_TkColinas_cm": float(
-                        dict_valores.get("Nivel_SuccionA_TkColinas", 250.0)
-                    ),
-                    "Nivel_Tk_Lomas_cm": float(
-                        dict_valores.get("Nivel_Tk_Lomas", 300.0)
-                    ),
-                    "Caudal_Real_m3h": float(
-                        dict_valores.get("Caudal_Distribución", 12000.0)
-                    ),
+                    "Nivel_Colinas_cm": n_c2,
+                    "Nivel_Carmelo_cm": n_car,
+                    "Nivel_Tk1_Planta_cm": n_t1,
+                    "Nivel_Tk2_Planta_cm": n_t2,
+                    "Nivel_TkNar2_cm": n_tn2,
+                    "Nivel_SuccionA_TkColinas_cm": n_suc,
+                    "Nivel_Tk_Lomas_cm": n_lom,
+                    "Caudal_Real_m3h": val_caudal,
+                    # Presiones (dinámicas ante cualquier cambio de columnas)
                     "Presion_Ref_Red_Tk_Colinas": float(
-                        dict_valores.get("Presion_Ref_Red_Tk_Colinas", 0.9)
+                        row.get("Presion_Ref_Red_Tk_Colinas", 0.9)
                     ),
                     "Presion_Sector10_Elevado_Colinas": float(
-                        dict_valores.get(
-                            "Presion_Sector10_Elevado_Colinas", 1.6
-                        )
+                        row.get("Presion_Sector10_Elevado_Colinas", 1.6)
                     ),
                     "Presion_AA_Pozon": float(
-                        dict_valores.get("Presion_AA_Pozon", 1.0)
+                        row.get("Presion_AA_Pozon", 1.0)
                     ),
                     "Presion_Sal_Booster_Asturias": float(
-                        dict_valores.get("Presion_Sal_Booster_Asturias", 1.0)
+                        row.get("Presion_Sal_Booster_Asturias", 1.0)
                     ),
                     "PresBomb_Znorte_a_TkPzuela": float(
-                        dict_valores.get("PresBomb_Znorte_a_TkPzuela", 7.4)
+                        row.get("PresBomb_Znorte_a_TkPzuela", 7.4)
                     ),
                     "Presion_Ent_ZonaNorte": float(
-                        dict_valores.get("Presion_Ent_ZonaNorte", 1.4)
+                        row.get("Presion_Ent_ZonaNorte", 1.4)
                     ),
                     "Presion_Pcanoas": float(
-                        dict_valores.get("Presion_Pcanoas", 2.2)
+                        row.get("Presion_Pcanoas", 2.2)
                     ),
-                    "Pres_Blezo": float(dict_valores.get("Pres_Blezo", 3.0)),
-                    "Presion_Chile": float(
-                        dict_valores.get("Presion_Chile", 1.4)
-                    ),
+                    "Pres_Blezo": float(row.get("Pres_Blezo", 3.0)),
+                    "Presion_Chile": float(row.get("Presion_Chile", 1.4)),
                     "Presion_Lomas": float(
-                        dict_valores.get("Presion_Lomas", 1.5)
+                        row.get("Presion_Lomas", 1.5)
                     ),  # <--- Tanque Lomas
-                    "Pres_Consulado": float(
-                        dict_valores.get("Pres_Consulado", 1.9)
-                    ),
-                    "Presion_Bgrande": float(
-                        dict_valores.get("Presion_Bgrande", 1.4)
-                    ),
+                    "Pres_Consulado": float(row.get("Pres_Consulado", 1.9)),
+                    "Presion_Bgrande": float(row.get("Presion_Bgrande", 1.4)),
                     "Presion_Bgrande_Kra7": float(
-                        dict_valores.get("Presion_Bgrande_Kra7", 1.4)
+                        row.get("Presion_Bgrande_Kra7", 1.4)
                     ),
-                    "Presion_Alcibia": float(
-                        dict_valores.get("Presion_Alcibia", 1.4)
-                    ),
-                    "Presion_Piepopa": float(
-                        dict_valores.get("Presion_Piepopa", 1.7)
-                    ),
-                    "Presion_Centro": float(
-                        dict_valores.get("Presion_Centro", 1.8)
-                    ),
-                    "Pres_Pic": float(dict_valores.get("Pres_Pic", 1.8)),
-                    "Presion_FPOPA": float(
-                        dict_valores.get("Presion_FPOPA", 7.8)
-                    ),
+                    "Presion_Alcibia": float(row.get("Presion_Alcibia", 1.4)),
+                    "Presion_Piepopa": float(row.get("Presion_Piepopa", 1.7)),
+                    "Presion_Centro": float(row.get("Presion_Centro", 1.8)),
+                    "Pres_Pic": float(row.get("Pres_Pic", 1.8)),
+                    "Presion_FPOPA": float(row.get("Presion_FPOPA", 7.8)),
                     "Presion_Olaya_Cjust": float(
-                        dict_valores.get("Presion_Olaya_Cjust", 2.6)
+                        row.get("Presion_Olaya_Cjust", 2.6)
                     ),
                     "Presion_Fredonia": float(
-                        dict_valores.get("Presion_Fredonia", 1.0)
+                        row.get("Presion_Fredonia", 1.0)
                     ),
                     "Pres_Ref_Bombeo_LaVictoria": float(
-                        dict_valores.get("Pres_Ref_Bombeo_LaVictoria", 2.4)
+                        row.get("Pres_Ref_Bombeo_LaVictoria", 2.4)
                     ),
-                    "Presion_Mop": float(dict_valores.get("Presion_Mop", 1.9)),
-                    "Presion_Royalco": float(
-                        dict_valores.get("Presion_Royalco", 2.7)
-                    ),
+                    "Pres_Mop": float(row.get("Pres_Mop", 1.9)),
+                    "Pres_Royalco": float(row.get("Pres_Royalco", 2.7)),
                     "Presion_Bellavista_Agua_Potable": float(
-                        dict_valores.get(
-                            "Presion_Bellavista_Agua_Potable", 1.5
-                        )
+                        row.get("Presion_Bellavista_Agua_Potable", 1.5)
                     ),
                     "Presion_Ent_Booster": float(
-                        dict_valores.get("Presion_Ent_Booster", 1.2)
+                        row.get("Presion_Ent_Booster", 1.2)
                     ),
                     "EBAP_1_OO_PIT_001.PV": float(
-                        dict_valores.get("EBAP_1_OO_PIT_001.PV", 5.4)
+                        row.get("EBAP_1_OO_PIT_001.PV", 5.4)
                     ),
                     "Almacenamiento_Sistema_Pct": round(alc_sys, 2),
                     "Estado_Operativo": "Normal / Seguro",
                 }
 
+                # Reemplazar o agregar
                 df_hist = df_hist[
                     ~(
-                        (df_hist["Fecha"] == str(fecha_actual))
+                        (df_hist["Fecha"] == f_str)
                         & (df_hist["Hora"] == f"{h_num:02d}:00")
                     )
                 ]
@@ -315,10 +324,10 @@ if archivo_subido is not None:
 
             df_hist.to_csv(HISTORICO_FILE, index=False)
             st.sidebar.success(
-                "🚀 ¡Plantilla sincronizada al histórico con éxito!"
+                "🚀 ¡Plantilla sincronizada y volcada al histórico exitosamente!"
             )
     except Exception as e:
-        st.sidebar.error(f"Error al procesar la plantilla: {e}")
+        st.sidebar.error(f"Error al leer la plantilla: {e}")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("⏱️ Hora de Consulta Actual (Modo Manual)")
@@ -330,8 +339,9 @@ hora_actual = st.sidebar.selectbox(
 )
 
 # ---------------------------------------------------------
-# 4. GENERACIÓN DE CURVAS BASE DINÁMICAS
+# 4. GENERACIÓN DE CURVAS BASE DINÁMICAS SEGÚN PRODUCCIÓN
 # ---------------------------------------------------------
+PRODUCCION_BASE_REF = 255000.0
 perfil_horario_prom = [
     0.024,
     0.022,
@@ -413,7 +423,7 @@ df_curva_base["Caudal_Max_Ajustado"] = (
 )
 
 # ---------------------------------------------------------
-# 5. MÓDULO DE INGRESO OPERATIVO MANUAL
+# 5. MÓDULO DE INGRESO MANUAL
 # ---------------------------------------------------------
 st.markdown(
     f"### 📥 Registro Operativo — Fecha: {fecha_actual} | Hora: {horas_format[hora_actual]}"
@@ -461,11 +471,8 @@ with col_ingreso2:
         key="input_caudal_real",
     )
 
-    st.markdown(
-        f"##### 🗜️ Control de Presiones (mca) — {horas_format[hora_actual]}"
-    )
     with st.expander(
-        "Desplegar Variables de Presión de tu Plantilla", expanded=False
+        "Desplegar Variables de Presión de la Plantilla", expanded=False
     ):
         p_colinas = st.number_input("Presion_Ref_Red_Tk_Colinas", value=0.9)
         p_sec10 = st.number_input("Presion_Sector10_Elevado_Colinas", value=1.6)
@@ -476,9 +483,7 @@ with col_ingreso2:
         p_pcanoas = st.number_input("Presion_Pcanoas", value=2.2)
         p_blezo = st.number_input("Pres_Blezo", value=3.0)
         p_chile = st.number_input("Presion_Chile", value=1.4)
-        p_lomas = st.number_input(
-            "Presion_Lomas", value=1.5
-        )  # <--- Tanque Lomas añadido
+        p_lomas = st.number_input("Presion_Lomas", value=1.5)
         p_consulado = st.number_input("Pres_Consulado", value=1.9)
         p_bgrande = st.number_input("Presion_Bgrande", value=1.4)
         p_bgrande7 = st.number_input("Presion_Bgrande_Kra7", value=1.4)
@@ -552,7 +557,7 @@ if guardar_registro:
         "Presion_Pcanoas": p_pcanoas,
         "Pres_Blezo": p_blezo,
         "Presion_Chile": p_chile,
-        "Presion_Lomas": p_lomas,  # <--- Tanque Lomas
+        "Presion_Lomas": p_lomas,
         "Pres_Consulado": p_consulado,
         "Presion_Bgrande": p_bgrande,
         "Presion_Bgrande_Kra7": p_bgrande7,
@@ -560,7 +565,7 @@ if guardar_registro:
         "Presion_Piepopa": p_piepopa,
         "Presion_Centro": p_centro,
         "Pres_Pic": p_pic,
-        "Pres_FPOPA": p_fpopa,
+        "Presion_FPOPA": p_fpopa,
         "Presion_Olaya_Cjust": p_olaya,
         "Presion_Fredonia": p_fredonia,
         "Pres_Ref_Bombeo_LaVictoria": p_victoria,
@@ -587,12 +592,61 @@ if guardar_registro:
     )
 
 # ---------------------------------------------------------
-# 7. TABLERO DE CONTROL EJECUTIVO (KPIs)
+# 7. CARGAR HISTÓRICO GLOBAL Y DEL DÍA ACTUAL
+# ---------------------------------------------------------
+df_hist_global = cargar_historico()
+df_dia_actual = df_hist_global[df_hist_global["Fecha"] == str(fecha_actual)]
+
+# ---------------------------------------------------------
+# 8. CÁLCULO INTELIGENTE DE RECOMENDACIÓN DE AJUSTE DE CAUDAL
+# ---------------------------------------------------------
+# Si ya hay registros en el día, calculamos la desviación acumulada frente a la meta
+recomendacion_ajuste_texto = "🟢 Sistema operando dentro de los parámetros esperados para cumplir la meta del día."
+delta_caudal_sugerido = 0.0
+
+if not df_dia_actual.empty:
+    df_dia_ordenado = df_dia_actual.copy()
+    df_dia_ordenado["Hora_Int"] = df_dia_ordenado["Hora"].apply(
+        lambda x: int(x.split(":")[0])
+    )
+    df_dia_ordenado = df_dia_ordenado.sort_values("Hora_Int")
+
+    # Tomar el último registro del día
+    ultimo_reg = df_dia_ordenado.iloc[-1]
+    ultima_H = int(ultimo_reg["Hora_Int"])
+    alm_actual_reg = ultimo_reg["Almacenamiento_Sistema_Pct"]
+
+    # Meta ideal a esa misma hora según la curva base
+    meta_h_ideal = df_curva_base[df_curva_base["Hora"] == ultima_H][
+        "Almacenamiento_Ideal_Pct"
+    ].values[0]
+
+    # Si estamos por debajo de la meta de almacenamiento a esta hora, calcular cuánto caudal recortar/ajustar
+    if alm_actual_reg < meta_h_ideal - 1.5:
+        # Déficit porcentual de almacenamiento
+        deficit_pct = meta_h_ideal - alm_actual_reg
+        # Horas restantes del día
+        horas_restantes = max(1, 23 - ultima_H)
+        # Volumen faltante estimado en m3 (asumiendo capacidad total de sistema aprox 50,000 m3 efectivos de almacenamiento)
+        volumen_faltante_m3 = (deficit_pct / 100.0) * 50000.0
+        delta_caudal_sugerido = volumen_faltante_m3 / horas_restantes
+        recomendacion_ajuste_texto = f"⚠️ **Alerta Operativa:** El almacenamiento está {deficit_pct:.1f}% por debajo de la meta a las {horas_format[ultima_H]}. Se recomienda **reducir el caudal de distribución en aprox. {delta_caudal_sugerido:,.0f} m³/h** durante las próximas {horas_restantes} horas para recuperar la meta del 75% al amanecer."
+    elif alm_actual_reg > meta_h_ideal + 2.0:
+        exceso_pct = alm_actual_reg - meta_h_ideal
+        horas_restantes = max(1, 23 - ultima_H)
+        volumen_exceso_m3 = (exceso_pct / 100.0) * 50000.0
+        delta_caudal_sugerido = volumen_exceso_m3 / horas_restantes
+        recomendacion_ajuste_texto = f"ℹ️ **Aviso Operativo:** El almacenamiento está {exceso_pct:.1f}% por encima de la meta. Puede **incrementar el caudal de distribución hasta en {delta_caudal_sugerido:,.0f} m³/h** de forma segura."
+
+# ---------------------------------------------------------
+# 9. TABLERO DE CONTROL EJECUTIVO (KPIs) Y RECOMENDACIÓN
 # ---------------------------------------------------------
 st.divider()
 st.subheader(
-    f"📊 Indicadores de Contraste — Corte {horas_format[hora_actual]}"
+    f"📊 Indicadores de Contraste y Recomendación Operativa — Fecha: {fecha_actual}"
 )
+
+st.info(recomendacion_ajuste_texto)
 
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 
@@ -604,36 +658,42 @@ with kpi1:
     )
 
 with kpi2:
-    delta_alm = pct_almacenamiento_actual - almacenamiento_meta_hora
+    ultimo_alm_val = (
+        df_dia_ordenado.iloc[-1]["Almacenamiento_Sistema_Pct"]
+        if not df_dia_actual.empty
+        else pct_almacenamiento_actual
+    )
     st.metric(
-        label="💧 Almacenamiento Sistema",
-        value=f"{pct_almacenamiento_actual:.1f}%",
-        delta=f"{delta_alm:+.1f}% vs Meta ({almacenamiento_meta_hora}%)",
+        label="💧 Almacenamiento Actual",
+        value=f"{ultimo_alm_val:.1f}%",
+        delta=f"Producción: {produccion_planta_m3d:,.0f} m³/d",
     )
 
 with kpi3:
+    ultimo_caudal_val = (
+        df_dia_ordenado.iloc[-1]["Caudal_Real_m3h"]
+        if not df_dia_actual.empty
+        else caudal_distribucion_actual
+    )
     st.metric(
         label="⚡ Caudal Operando",
-        value=f"{caudal_distribucion_actual:,.1f} m³/h",
-        delta=f"Rango: [{c_min_permitido:,.1f} - {c_max_permitido:,.1f}] m³/h",
+        value=f"{ultimo_caudal_val:,.1f} m³/h",
     )
 
 with kpi4:
-    prom_presion = np.mean(
-        [p_colinas, p_sec10, p_blezo, p_lomas, p_pic, p_fpopa]
-    )
     st.metric(
-        label="🗜️ Presión Promedio Red",
-        value=f"{prom_presion:.1f} mca",
-        delta="Sensores Activos OK",
+        label="Estado Operativo",
+        value=(
+            "🟢 Normal" if "Alerta" not in recomendacion_ajuste_texto else "🟠 Ajuste"
+        ),
     )
 
 # ---------------------------------------------------------
-# 8. DASHBOARD GRÁFICO CON CURVAS SUAVIZADAS Y CALENDARIO
+# 10. DASHBOARD GRÁFICO CON TENDENCIAS REALES Y PROYECCIONES
 # ---------------------------------------------------------
 st.divider()
 st.subheader(
-    "📈 Dashboard Gráfico: Tendencias Suavizadas, Contraste y Proyección"
+    "📈 Dashboard Gráfico: Tendencias Dinámicas, Contraste y Proyección"
 )
 
 tab_g1, tab_g2, tab_g3, tab_g4 = st.tabs([
@@ -642,9 +702,6 @@ tab_g1, tab_g2, tab_g3, tab_g4 = st.tabs([
     "🗜️ Tendencia de Presiones (Plantilla)",
     "📅 Calendario Histórico",
 ])
-
-df_hist_global = cargar_historico()
-df_dia_actual = df_hist_global[df_hist_global["Fecha"] == str(fecha_actual)]
 
 with tab_g1:
     fig_c = go.Figure()
@@ -711,18 +768,6 @@ with tab_g1:
                     ),
                 )
             )
-    else:
-        fig_c.add_trace(
-            go.Scatter(
-                x=[hora_actual],
-                y=[caudal_distribucion_actual],
-                mode="markers+text",
-                name="Caudal Operando (Actual)",
-                text=[f"{caudal_distribucion_actual:,.0f} m³/h"],
-                textposition="top center",
-                marker=dict(color="#2ecc71", size=14, symbol="diamond"),
-            )
-        )
 
     fig_c.update_layout(
         xaxis=dict(
@@ -790,18 +835,6 @@ with tab_g2:
                     ),
                 )
             )
-    else:
-        fig_s.add_trace(
-            go.Scatter(
-                x=[hora_actual],
-                y=[pct_almacenamiento_actual],
-                mode="markers+text",
-                name="Almacenamiento Actual",
-                text=[f"{pct_almacenamiento_actual:.1f}%"],
-                textposition="top center",
-                marker=dict(color="#e67e22", size=14, symbol="star"),
-            )
-        )
 
     fig_s.add_hline(
         y=META_AMANECER_PCT,
@@ -823,9 +856,7 @@ with tab_g2:
     st.plotly_chart(fig_s, use_container_width=True)
 
 with tab_g3:
-    st.markdown(
-        "### 🗜️ Tendencia Horaria de Presiones (Tu Plantilla - mca)"
-    )
+    st.markdown("### 🗜️ Tendencia Horaria de Presiones (Plantilla SCADA)")
     if not df_dia_actual.empty:
         fig_p = go.Figure()
         df_p_ord = df_dia_actual.copy()
@@ -885,7 +916,7 @@ with tab_g4:
         st.info("Aún no hay fechas registradas en el archivo histórico.")
 
 # ---------------------------------------------------------
-# 10. DETALLE DE TANQUES
+# 11. DETALLE DE TANQUES
 # ---------------------------------------------------------
 st.divider()
 st.subheader("📋 Estado Actual de Niveles por Tanque (cm)")
