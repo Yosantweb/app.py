@@ -29,7 +29,7 @@ st.title(
     "💧 Sistema SCADA Operativo y Proyección — Aguas de Cartagena S.A. E.S.P."
 )
 st.markdown(
-    "Monitoreo avanzado de tanques, caudales, calendario histórico y control de presiones sincronizado por horas del día."
+    "Monitoreo avanzado, carga externa de plantillas, curvas suavizadas, calendario histórico y control de presiones por horas."
 )
 
 # ---------------------------------------------------------
@@ -55,7 +55,6 @@ def cargar_historico():
             "Nivel_SuccionA_TkColinas_cm",
             "Nivel_Tk_Lomas_cm",
             "Caudal_Real_m3h",
-            # Variables de presión de la plantilla SCADA
             "Presion_Ref_Red_Tk_Colinas",
             "Presion_Sector10_Elevado_Colinas",
             "PresBomb_Znnorte_a_TkPzuela",
@@ -108,10 +107,20 @@ FACTORES_PONDERACION = {
 META_AMANECER_PCT = 75.0
 horas_dia = list(range(24))
 
+horas_format = {
+    h: (
+        f"{h if h<=12 else h-12:02d}:00 "
+        f"{'a. m.' if h<12 else 'p. m.'}"
+        if h != 0
+        else "12:00 a. m."
+    )
+    for h in horas_dia
+}
+
 # ---------------------------------------------------------
-# 3. PANEL LATERAL: CONFIGURACIÓN GENERAL Y HORA DE CORTE
+# 3. PANEL LATERAL: PARÁMETROS Y CARGA DE DOCUMENTO EXTERNO
 # ---------------------------------------------------------
-st.sidebar.header("🎛️ Parámetros del Turno y Planta")
+st.sidebar.header("🎛️ Parámetros y Carga Externa")
 
 fecha_actual = st.sidebar.date_input(
     "Fecha de Operación", value=datetime.today()
@@ -132,22 +141,32 @@ almacenamiento_06am_pct = st.sidebar.number_input(
 )
 
 st.sidebar.markdown("---")
+st.sidebar.subheader("📂 Cargar Plantilla Externa (Excel / CSV)")
+archivo_subido = st.sidebar.file_uploader(
+    "Sube tu archivo con los datos del día", type=["csv", "xlsx"]
+)
+
+# Procesar archivo externo si se carga
+df_externo = None
+if archivo_subido is not None:
+    try:
+        if archivo_subido.name.endswith(".csv"):
+            df_externo = pd.read_csv(archivo_subido)
+        else:
+            df_externo = pd.read_excel(archivo_subido)
+        st.sidebar.success(
+            "✅ ¡Plantilla externa cargada con éxito! Puedes sincronizarla abajo."
+        )
+    except Exception as e:
+        st.sidebar.error(f"Error al leer el archivo: {e}")
+
+st.sidebar.markdown("---")
 st.sidebar.subheader("⏱️ Hora de Consulta Actual")
-# Formateamos las horas para que se vean amigables (ej. "07:00 a. m.")
-horas_format = {
-    h: (
-        f"{h if h<=12 else h-12:02d}:00 "
-        f"{'a. m.' if h<12 else 'p. m.'}"
-        if h != 0
-        else "12:00 a. m."
-    )
-    for h in horas_dia
-}
 hora_actual = st.sidebar.selectbox(
     "Seleccione la hora del turno a registrar",
     options=horas_dia,
     format_func=lambda x: horas_format[x],
-    index=7,  # Por defecto 07:00 a.m.
+    index=7,
 )
 
 # ---------------------------------------------------------
@@ -234,11 +253,32 @@ df_curva_base["Caudal_Max_Ajustado"] = (
 )
 
 # ---------------------------------------------------------
-# 5. MÓDULO DE INGRESO OPERATIVO (SINCRONIZADO CON LA HORA SELECCIONADA)
+# 5. MÓDULO DE INGRESO OPERATIVO (MANUAL O CARGA EXTERNA MASIVA)
 # ---------------------------------------------------------
 st.markdown(
     f"### 📥 Registro Operativo — Fecha: {fecha_actual} | Hora: {horas_format[hora_actual]}"
 )
+
+# Opción de volcado masivo si hay archivo externo cargado
+if df_externo is not None:
+    if st.button(
+        "⚡ Volcar y Sincronizar Todo el Archivo Externo al Histórico del Día",
+        type="secondary",
+    ):
+        try:
+            df_hist = cargar_historico()
+            # Aseguramos formato estándar en las columnas del archivo externo antes de volcarlo
+            df_hist = pd.concat(
+                [df_hist, df_externo], ignore_index=True
+            ).drop_duplicates(subset=["Fecha", "Hora"], keep="last")
+            df_hist.to_csv(HISTORICO_FILE, index=False)
+            st.success(
+                "✅ ¡Todos los registros del archivo externo fueron volcados e integrados al histórico exitosamente!"
+            )
+        except Exception as e:
+            st.error(
+                f"Error al procesar el volcado masivo. Verifica que las columnas coincidan: {e}"
+            )
 
 col_ingreso1, col_ingreso2 = st.columns([2, 1])
 
