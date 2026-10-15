@@ -26,10 +26,10 @@ st.markdown(
 )
 
 st.title(
-    "💧 Sistema de Control, Históricos y Proyección — Aguas de Cartagena S.A. E.S.P."
+    "💧 Sistema SCADA Operativo y Proyección — Aguas de Cartagena S.A. E.S.P."
 )
 st.markdown(
-    "Monitoreo de tanques en centímetros, bandas de caudal en **$m^3/h$**, trazabilidad de tendencia real y proyección operativa."
+    "Monitoreo avanzado de tanques, caudales, calendario histórico y control de presiones sincronizado por horas del día."
 )
 
 # ---------------------------------------------------------
@@ -45,6 +45,7 @@ def cargar_historico():
         return pd.DataFrame(columns=[
             "Fecha",
             "Hora",
+            "Produccion_Planta_m3d",
             "Almacenamiento_06am_Pct",
             "Nivel_Colinas_cm",
             "Nivel_Carmelo_cm",
@@ -54,13 +55,35 @@ def cargar_historico():
             "Nivel_SuccionA_TkColinas_cm",
             "Nivel_Tk_Lomas_cm",
             "Caudal_Real_m3h",
+            # Variables de presión de la plantilla SCADA
+            "Presion_Ref_Red_Tk_Colinas",
+            "Presion_Sector10_Elevado_Colinas",
+            "PresBomb_Znnorte_a_TkPzuela",
+            "Presion_Ent_ZonaNorte",
+            "Presion_Pcanoas",
+            "Pres_Blezo",
+            "Presion_Chile",
+            "Pres_Consulado",
+            "Presion_Bgrande",
+            "Presion_Bgrande_Kra7",
+            "Presion_Alcibia",
+            "Presion_Piepopa",
+            "Pres_Pic",
+            "Pres_FPOPA",
+            "Presion_Olaya_Cjust",
+            "Presion_Fredonia",
+            "Pres_Ref_Bombeo_LaVictoria",
+            "Pres_Mop",
+            "Pres_Royalco",
+            "Presion_Bellavista_Agua_Potable",
+            "Presión_Salida_EBAP_CERRO",
             "Almacenamiento_Sistema_Pct",
             "Estado_Operativo",
         ])
 
 
 # ---------------------------------------------------------
-# 2. CONFIGURACIÓN DE TANQUES Y NIVELES MÁXIMOS (en centímetros)
+# 2. CONFIGURACIÓN DE TANQUES Y NIVELES MÁXIMOS
 # ---------------------------------------------------------
 ALTURAS_MAXIMAS_TANQUES = {
     "Nivel_Colinas": 450.0,
@@ -85,7 +108,80 @@ FACTORES_PONDERACION = {
 META_AMANECER_PCT = 75.0
 horas_dia = list(range(24))
 
-# Curvas de referencia teóricas base del día (Escala real del sistema hasta ~14,500 m3/h)
+# ---------------------------------------------------------
+# 3. PANEL LATERAL: CONFIGURACIÓN GENERAL Y HORA DE CORTE
+# ---------------------------------------------------------
+st.sidebar.header("🎛️ Parámetros del Turno y Planta")
+
+fecha_actual = st.sidebar.date_input(
+    "Fecha de Operación", value=datetime.today()
+)
+
+produccion_planta_m3d = st.sidebar.selectbox(
+    "Producción Diaria de Planta (m³/día)",
+    options=[253000.0, 255000.0, 272000.0],
+    index=1,
+)
+
+almacenamiento_06am_pct = st.sidebar.number_input(
+    "% Almacenamiento real (06:00 a.m.)",
+    min_value=0.0,
+    max_value=100.0,
+    value=72.0,
+    step=0.5,
+)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("⏱️ Hora de Consulta Actual")
+# Formateamos las horas para que se vean amigables (ej. "07:00 a. m.")
+horas_format = {
+    h: (
+        f"{h if h<=12 else h-12:02d}:00 "
+        f"{'a. m.' if h<12 else 'p. m.'}"
+        if h != 0
+        else "12:00 a. m."
+    )
+    for h in horas_dia
+}
+hora_actual = st.sidebar.selectbox(
+    "Seleccione la hora del turno a registrar",
+    options=horas_dia,
+    format_func=lambda x: horas_format[x],
+    index=7,  # Por defecto 07:00 a.m.
+)
+
+# ---------------------------------------------------------
+# 4. GENERACIÓN DE CURVAS BASE DINÁMICAS
+# ---------------------------------------------------------
+perfil_horario_prom = [
+    0.024,
+    0.022,
+    0.020,
+    0.020,
+    0.022,
+    0.030,
+    0.042,
+    0.050,
+    0.054,
+    0.048,
+    0.044,
+    0.042,
+    0.042,
+    0.044,
+    0.050,
+    0.054,
+    0.057,
+    0.053,
+    0.044,
+    0.038,
+    0.032,
+    0.028,
+    0.025,
+    0.023,
+]
+caudal_prom_ref = [p * produccion_planta_m3d for p in perfil_horario_prom]
+caudal_min_ref = [c * 0.85 for c in caudal_prom_ref]
+caudal_max_ref = [c * 1.15 for c in caudal_prom_ref]
 almacenamiento_ideal_ref = [
     75,
     78,
@@ -112,84 +208,6 @@ almacenamiento_ideal_ref = [
     74,
     75,
 ]
-caudal_min_ref = [
-    5000,
-    4500,
-    4000,
-    4000,
-    4500,
-    6000,
-    9000,
-    11000,
-    12000,
-    10500,
-    9500,
-    9000,
-    9000,
-    9500,
-    11000,
-    12000,
-    12500,
-    11500,
-    9500,
-    8000,
-    6500,
-    5500,
-    5000,
-    4500,
-]
-caudal_prom_ref = [
-    6000,
-    5500,
-    5000,
-    5000,
-    5500,
-    7500,
-    11000,
-    13000,
-    14000,
-    12500,
-    11500,
-    11000,
-    11000,
-    11500,
-    13000,
-    14000,
-    14500,
-    13500,
-    11000,
-    9500,
-    8000,
-    7000,
-    6500,
-    6000,
-]
-caudal_max_ref = [
-    7000,
-    6500,
-    6000,
-    6000,
-    6500,
-    9000,
-    13000,
-    15000,
-    16000,
-    14500,
-    13500,
-    13000,
-    13000,
-    13500,
-    15000,
-    16000,
-    16500,
-    15500,
-    13000,
-    11000,
-    9500,
-    8500,
-    7500,
-    7000,
-]
 
 df_curva_base = pd.DataFrame({
     "Hora": horas_dia,
@@ -199,34 +217,27 @@ df_curva_base = pd.DataFrame({
     "Caudal_Max": caudal_max_ref,
 })
 
-# ---------------------------------------------------------
-# 3. PANEL LATERAL: CONFIGURACIÓN GENERAL DEL TURNO
-# ---------------------------------------------------------
-st.sidebar.header("🎛️ Parámetros del Turno y Fecha")
+factor_condicion_matutina = 1.0
+if almacenamiento_06am_pct < META_AMANECER_PCT:
+    factor_condicion_matutina = max(
+        0.75, almacenamiento_06am_pct / META_AMANECER_PCT
+    )
 
-fecha_actual = st.sidebar.date_input(
-    "Fecha de Operación", value=datetime.today()
+df_curva_base["Caudal_Min_Ajustado"] = (
+    df_curva_base["Caudal_Min"] * factor_condicion_matutina
 )
-
-almacenamiento_06am_pct = st.sidebar.number_input(
-    "% Almacenamiento real (06:00 a.m.)",
-    min_value=0.0,
-    max_value=100.0,
-    value=72.0,
-    step=0.5,
+df_curva_base["Caudal_Prom_Ajustado"] = (
+    df_curva_base["Caudal_Prom"] * factor_condicion_matutina
 )
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("⏱️ Hora de Consulta Actual")
-hora_actual = st.sidebar.selectbox(
-    "Seleccione la hora del turno a registrar", options=horas_dia, index=8
+df_curva_base["Caudal_Max_Ajustado"] = (
+    df_curva_base["Caudal_Max"] * factor_condicion_matutina
 )
 
 # ---------------------------------------------------------
-# 4. MÓDULO DE ACTUALIZACIÓN DE NIVELES (CM desde 0) Y CAUDAL (M3/H)
+# 5. MÓDULO DE INGRESO OPERATIVO (SINCRONIZADO CON LA HORA SELECCIONADA)
 # ---------------------------------------------------------
 st.markdown(
-    f"### 📥 Registro Operativo — Fecha: {fecha_actual} | Hora: {hora_actual:02d}:00 hrs"
+    f"### 📥 Registro Operativo — Fecha: {fecha_actual} | Hora: {horas_format[hora_actual]}"
 )
 
 col_ingreso1, col_ingreso2 = st.columns([2, 1])
@@ -262,18 +273,152 @@ with col_ingreso2:
     caudal_distribucion_actual = st.number_input(
         "Caudal Distribución Real ($m^3/h$)",
         min_value=0.0,
-        max_value=20000.0,
-        value=12000.0,
+        max_value=30000.0,
+        value=float(
+            df_curva_base[df_curva_base["Hora"] == hora_actual][
+                "Caudal_Prom_Ajustado"
+            ].values[0]
+        ),
         step=100.0,
         key="input_caudal_real",
     )
+
+    st.markdown(
+        f"##### 🗜️ Control de Presiones (mca) — {horas_format[hora_actual]}"
+    )
+    with st.expander(
+        "Desplegar Variables de Presión por Sistema", expanded=True
+    ):
+        p_colinas = st.number_input(
+            "Presion_Ref_Red_Tk_Colinas",
+            min_value=0.0,
+            max_value=50.0,
+            value=0.9,
+            step=0.1,
+        )
+        p_sec10 = st.number_input(
+            "Presion_Sector10_Elevado_Colinas",
+            min_value=0.0,
+            max_value=50.0,
+            value=1.6,
+            step=0.1,
+        )
+        p_pzuela = st.number_input(
+            "PresBomb_Znnorte_a_TkPzuela",
+            min_value=0.0,
+            max_value=50.0,
+            value=7.4,
+            step=0.1,
+        )
+        p_znorte = st.number_input(
+            "Presion_Ent_ZonaNorte",
+            min_value=0.0,
+            max_value=50.0,
+            value=1.4,
+            step=0.1,
+        )
+        p_pcanoas = st.number_input(
+            "Presion_Pcanoas",
+            min_value=0.0,
+            max_value=50.0,
+            value=2.2,
+            step=0.1,
+        )
+        p_blezo = st.number_input(
+            "Pres_Blezo", min_value=0.0, max_value=50.0, value=3.0, step=0.1
+        )
+        p_chile = st.number_input(
+            "Presion_Chile", min_value=0.0, max_value=50.0, value=1.4, step=0.1
+        )
+        p_consulado = st.number_input(
+            "Pres_Consulado",
+            min_value=0.0,
+            max_value=50.0,
+            value=1.9,
+            step=0.1,
+        )
+        p_bgrande = st.number_input(
+            "Presion_Bgrande",
+            min_value=0.0,
+            max_value=50.0,
+            value=1.4,
+            step=0.1,
+        )
+        p_bgrande7 = st.number_input(
+            "Presion_Bgrande_Kra7",
+            min_value=0.0,
+            max_value=50.0,
+            value=1.4,
+            step=0.1,
+        )
+        p_alcibia = st.number_input(
+            "Presion_Alcibia",
+            min_value=0.0,
+            max_value=50.0,
+            value=1.4,
+            step=0.1,
+        )
+        p_piepopa = st.number_input(
+            "Presion_Piepopa",
+            min_value=0.0,
+            max_value=50.0,
+            value=1.7,
+            step=0.1,
+        )
+        p_pic = st.number_input(
+            "Pres_Pic", min_value=0.0, max_value=50.0, value=1.8, step=0.1
+        )
+        p_fpopa = st.number_input(
+            "Pres_FPOPA", min_value=0.0, max_value=50.0, value=7.8, step=0.1
+        )
+        p_olaya = st.number_input(
+            "Presion_Olaya_Cjust",
+            min_value=0.0,
+            max_value=50.0,
+            value=2.6,
+            step=0.1,
+        )
+        p_fredonia = st.number_input(
+            "Presion_Fredonia",
+            min_value=0.0,
+            max_value=50.0,
+            value=1.0,
+            step=0.1,
+        )
+        p_victoria = st.number_input(
+            "Pres_Ref_Bombeo_LaVictoria",
+            min_value=0.0,
+            max_value=50.0,
+            value=2.4,
+            step=0.1,
+        )
+        p_mop = st.number_input(
+            "Pres_Mop", min_value=0.0, max_value=50.0, value=1.9, step=0.1
+        )
+        p_royalco = st.number_input(
+            "Pres_Royalco", min_value=0.0, max_value=50.0, value=2.7, step=0.1
+        )
+        p_bellavista = st.number_input(
+            "Presion_Bellavista_Agua_Potable",
+            min_value=0.0,
+            max_value=50.0,
+            value=1.5,
+            step=0.1,
+        )
+        p_cerro = st.number_input(
+            "Presión Salida EBAP CERRO",
+            min_value=0.0,
+            max_value=50.0,
+            value=5.4,
+            step=0.1,
+        )
 
     guardar_registro = st.button(
         "💾 Guardar / Registrar Hora en Histórico", type="primary"
     )
 
 # ---------------------------------------------------------
-# 5. CÁLCULOS TÉCNICOS Y VALIDACIÓN
+# 6. CÁLCULOS TÉCNICOS Y VALIDACIÓN
 # ---------------------------------------------------------
 pct_almacenamiento_actual = 0.0
 for tanque, cm_val in niveles_cm_ingresados.items():
@@ -281,22 +426,6 @@ for tanque, cm_val in niveles_cm_ingresados.items():
     peso = FACTORES_PONDERACION[tanque]
     fraccion_tanque = min(1.0, cm_val / alt_max)
     pct_almacenamiento_actual += fraccion_tanque * peso * 100.0
-
-factor_condicion_matutina = 1.0
-if almacenamiento_06am_pct < META_AMANECER_PCT:
-    factor_condicion_matutina = max(
-        0.75, almacenamiento_06am_pct / META_AMANECER_PCT
-    )
-
-df_curva_base["Caudal_Min_Ajustado"] = (
-    df_curva_base["Caudal_Min"] * factor_condicion_matutina
-)
-df_curva_base["Caudal_Prom_Ajustado"] = (
-    df_curva_base["Caudal_Prom"] * factor_condicion_matutina
-)
-df_curva_base["Caudal_Max_Ajustado"] = (
-    df_curva_base["Caudal_Max"] * factor_condicion_matutina
-)
 
 fila_ref = df_curva_base[df_curva_base["Hora"] == hora_actual].iloc[0]
 c_min_permitido = fila_ref["Caudal_Min_Ajustado"]
@@ -317,6 +446,7 @@ if guardar_registro:
     nuevo_registro = {
         "Fecha": str(fecha_actual),
         "Hora": f"{hora_actual:02d}:00",
+        "Produccion_Planta_m3d": produccion_planta_m3d,
         "Almacenamiento_06am_Pct": almacenamiento_06am_pct,
         "Nivel_Colinas_cm": niveles_cm_ingresados["Nivel_Colinas"],
         "Nivel_Carmelo_cm": niveles_cm_ingresados["Nivel_Carmelo"],
@@ -328,26 +458,50 @@ if guardar_registro:
         ],
         "Nivel_Tk_Lomas_cm": niveles_cm_ingresados["Nivel_Tk_Lomas"],
         "Caudal_Real_m3h": caudal_distribucion_actual,
+        "Presion_Ref_Red_Tk_Colinas": p_colinas,
+        "Presion_Sector10_Elevado_Colinas": p_sec10,
+        "PresBomb_Znnorte_a_TkPzuela": p_pzuela,
+        "Presion_Ent_ZonaNorte": p_znorte,
+        "Presion_Pcanoas": p_pcanoas,
+        "Pres_Blezo": p_blezo,
+        "Presion_Chile": p_chile,
+        "Pres_Consulado": p_consulado,
+        "Presion_Bgrande": p_bgrande,
+        "Presion_Bgrande_Kra7": p_bgrande7,
+        "Presion_Alcibia": p_alcibia,
+        "Presion_Piepopa": p_piepopa,
+        "Pres_Pic": p_pic,
+        "Pres_FPOPA": p_fpopa,
+        "Presion_Olaya_Cjust": p_olaya,
+        "Presion_Fredonia": p_fredonia,
+        "Pres_Ref_Bombeo_LaVictoria": p_victoria,
+        "Pres_Mop": p_mop,
+        "Pres_Royalco": p_royalco,
+        "Presion_Bellavista_Agua_Potable": p_bellavista,
+        "Presión_Salida_EBAP_CERRO": p_cerro,
         "Almacenamiento_Sistema_Pct": round(pct_almacenamiento_actual, 2),
         "Estado_Operativo": estado_op_str,
     }
     df_hist = df_hist[
-        ~((df_hist["Fecha"] == str(fecha_actual)) & (df_hist["Hora"] == f"{hora_actual:02d}:00"))
+        ~(
+            (df_hist["Fecha"] == str(fecha_actual))
+            & (df_hist["Hora"] == f"{hora_actual:02d}:00")
+        )
     ]
     df_hist = pd.concat(
         [df_hist, pd.DataFrame([nuevo_registro])], ignore_index=True
     )
     df_hist.to_csv(HISTORICO_FILE, index=False)
     st.success(
-        f"✅ ¡Registro guardado exitosamente en el histórico para el {fecha_actual} a las {hora_actual:02d}:00 hrs!"
+        f"✅ ¡Registro guardado exitosamente en el histórico para el {fecha_actual} a las {horas_format[hora_actual]}!"
     )
 
 # ---------------------------------------------------------
-# 6. TABLERO DE CONTROL EJECUTIVO (KPIs)
+# 7. TABLERO DE CONTROL EJECUTIVO (KPIs)
 # ---------------------------------------------------------
 st.divider()
 st.subheader(
-    f"📊 Indicadores de Contraste — Corte {hora_actual:02d}:00 hrs"
+    f"📊 Indicadores de Contraste — Corte {horas_format[hora_actual]}"
 )
 
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
@@ -375,34 +529,35 @@ with kpi3:
     )
 
 with kpi4:
+    prom_presion = np.mean(
+        [p_colinas, p_sec10, p_pzuela, p_blezo, p_pic, p_cerro]
+    )
     st.metric(
-        label="Estado Operativo",
-        value=(
-            "🟢 Normal" if estado_op_str == "Normal / Seguro" else "🟠 Ajuste"
-        ),
+        label="🗜️ Presión Promedio Red",
+        value=f"{prom_presion:.1f} mca",
+        delta="Sensores Activos OK",
     )
 
 # ---------------------------------------------------------
-# 7. DASHBOARD GRÁFICO: LÍNEAS DE TENDENCIA Y PROYECCIÓN
+# 8. DASHBOARD GRÁFICO CON CURVAS SUAVIZADAS Y CALENDARIO
 # ---------------------------------------------------------
 st.divider()
 st.subheader(
-    "📈 Dashboard Gráfico: Tendencia Operativa, Contraste y Proyección del Día"
+    "📈 Dashboard Gráfico: Tendencias Suavizadas, Contraste y Proyección"
 )
 
-tab_g1, tab_g2, tab_g3 = st.tabs([
-    "⚡ Tendencia y Proyección de Caudal",
-    "💧 Tendencia y Proyección de Almacenamiento",
-    "📊 Histórico Operativo del Día",
+tab_g1, tab_g2, tab_g3, tab_g4 = st.tabs([
+    "⚡ Tendencia y Proyección Caudal",
+    "💧 Tendencia y Proyección Almacenamiento",
+    "🗜️ Tendencia de Presiones (Plantilla SCADA)",
+    "📅 Calendario Histórico",
 ])
 
-# Cargar histórico actual para la fecha seleccionada
 df_hist_global = cargar_historico()
 df_dia_actual = df_hist_global[df_hist_global["Fecha"] == str(fecha_actual)]
 
 with tab_g1:
     fig_c = go.Figure()
-    # 1. Banda permitida
     fig_c.add_trace(
         go.Scatter(
             x=horas_dia + horas_dia[::-1],
@@ -414,20 +569,17 @@ with tab_g1:
             name="Banda Permitida",
         )
     )
-    # 2. Curva objetivo
     fig_c.add_trace(
         go.Scatter(
             x=df_curva_base["Hora"],
             y=df_curva_base["Caudal_Prom_Ajustado"],
             mode="lines",
             name="Caudal Objetivo (Meta)",
-            line=dict(color="#0b3c5d", width=2, dash="dash"),
+            line=dict(color="#0b3c5d", width=2, dash="dash", shape="spline"),
         )
     )
 
-    # Si hay datos históricos guardados en el día, dibujamos la línea real transcurrida
     if not df_dia_actual.empty:
-        # Ordenar por hora
         df_dia_ordenado = df_dia_actual.copy()
         df_dia_ordenado["Hora_Int"] = df_dia_ordenado["Hora"].apply(
             lambda x: int(x.split(":")[0])
@@ -440,21 +592,17 @@ with tab_g1:
                 y=df_dia_ordenado["Caudal_Real_m3h"],
                 mode="lines+markers",
                 name="Tendencia Real Transcurrida",
-                line=dict(color="#27ae60", width=3),
+                line=dict(color="#27ae60", width=3, shape="spline"),
                 marker=dict(size=8),
             )
         )
 
-        # Proyección para el resto del día basada en el último dato registrado o actual
         ultima_hora_reg = df_dia_ordenado["Hora_Int"].max()
         if ultima_hora_reg < 23:
-            horas_proy = list(
-                range(int(ultima_hora_reg), 24)
-            )  # Conectar desde el último punto
+            horas_proy = list(range(int(ultima_hora_reg), 24))
             ultimo_caudal = df_dia_ordenado[
                 df_dia_ordenado["Hora_Int"] == ultima_hora_reg
             ]["Caudal_Real_m3h"].values[0]
-            # Curva de proyección estimada hacia el objetivo del resto del día
             val_meta_final = df_curva_base[df_curva_base["Hora"] == 23][
                 "Caudal_Prom_Ajustado"
             ].values[0]
@@ -468,11 +616,12 @@ with tab_g1:
                     y=caudales_proyectados,
                     mode="lines",
                     name="Proyección Resto del Día",
-                    line=dict(color="#e67e22", width=3, dash="dot"),
+                    line=dict(
+                        color="#e67e22", width=3, dash="dot", shape="spline"
+                    ),
                 )
             )
     else:
-        # Si no hay registros guardados aún, mostramos el punto actual interactivo
         fig_c.add_trace(
             go.Scatter(
                 x=[hora_actual],
@@ -481,15 +630,16 @@ with tab_g1:
                 name="Caudal Operando (Actual)",
                 text=[f"{caudal_distribucion_actual:,.0f} m³/h"],
                 textposition="top center",
-                marker=dict(
-                    color="#2ecc71" if caudal_en_rango else "#e74c3c",
-                    size=14,
-                    symbol="diamond",
-                ),
+                marker=dict(color="#2ecc71", size=14, symbol="diamond"),
             )
         )
 
     fig_c.update_layout(
+        xaxis=dict(
+            tickmode="array",
+            tickvals=horas_dia,
+            ticktext=[horas_format[h] for h in horas_dia],
+        ),
         xaxis_title="Hora del Día",
         yaxis_title="Caudal (m³/h)",
         template="plotly_white",
@@ -499,14 +649,13 @@ with tab_g1:
 
 with tab_g2:
     fig_s = go.Figure()
-    # Curva meta de almacenamiento
     fig_s.add_trace(
         go.Scatter(
             x=df_curva_base["Hora"],
             y=df_curva_base["Almacenamiento_Ideal_Pct"],
             mode="lines",
             name="Curva Meta Almacenamiento (%)",
-            line=dict(color="#2980b9", width=3),
+            line=dict(color="#2980b9", width=3, shape="spline"),
         )
     )
 
@@ -517,26 +666,24 @@ with tab_g2:
         )
         df_dia_ordenado = df_dia_ordenado.sort_values("Hora_Int")
 
-        # Línea continua real transcurrida
         fig_s.add_trace(
             go.Scatter(
                 x=df_dia_ordenado["Hora_Int"],
                 y=df_dia_ordenado["Almacenamiento_Sistema_Pct"],
                 mode="lines+markers",
                 name="Almacenamiento Real Transcurrido",
-                line=dict(color="#27ae60", width=3),
+                line=dict(color="#27ae60", width=3, shape="spline"),
                 marker=dict(size=8),
             )
         )
 
-        # Proyección de almacenamiento para el resto del día hacia la meta del amanecer siguiente (75%)
         ultima_hora_reg = df_dia_ordenado["Hora_Int"].max()
         if ultima_hora_reg < 23:
             horas_proy = list(range(int(ultima_hora_reg), 24))
             ultimo_alm = df_dia_ordenado[
                 df_dia_ordenado["Hora_Int"] == ultima_hora_reg
             ]["Almacenamiento_Sistema_Pct"].values[0]
-            meta_final_dia = 75.0  # Meta del siguiente amanecer
+            meta_final_dia = 75.0
 
             almacenamientos_proyectados = np.linspace(
                 ultimo_alm, meta_final_dia, len(horas_proy)
@@ -548,7 +695,9 @@ with tab_g2:
                     y=almacenamientos_proyectados,
                     mode="lines",
                     name="Proyección Resto del Día (Hacia Meta 75%)",
-                    line=dict(color="#e67e22", width=3, dash="dot"),
+                    line=dict(
+                        color="#e67e22", width=3, dash="dot", shape="spline"
+                    ),
                 )
             )
     else:
@@ -571,6 +720,11 @@ with tab_g2:
         annotation_text="Meta Amanecer 75%",
     )
     fig_s.update_layout(
+        xaxis=dict(
+            tickmode="array",
+            tickvals=horas_dia,
+            ticktext=[horas_format[h] for h in horas_dia],
+        ),
         xaxis_title="Hora del Día",
         yaxis_title="Almacenamiento Sistema (%)",
         template="plotly_white",
@@ -580,17 +734,66 @@ with tab_g2:
 
 with tab_g3:
     st.markdown(
-        f"### 🗂️ Trazabilidad y Comportamiento del Día: {fecha_actual}"
+        "### 🗜️ Tendencia Horaria de Presiones (Plantilla SCADA - mca)"
     )
     if not df_dia_actual.empty:
-        st.dataframe(df_dia_actual, use_container_width=True)
+        fig_p = go.Figure()
+        df_p_ord = df_dia_actual.copy()
+        df_p_ord["Hora_Int"] = df_p_ord["Hora"].apply(
+            lambda x: int(x.split(":")[0])
+        )
+        df_p_ord = df_p_ord.sort_values("Hora_Int")
+
+        columnas_presiones = [
+            c for c in df_p_ord.columns if "Pres" in c or "Presión" in c
+        ]
+        for col_p in columnas_presiones:
+            fig_p.add_trace(
+                go.Scatter(
+                    x=df_p_ord["Hora_Int"],
+                    y=df_p_ord[col_p],
+                    mode="lines+markers",
+                    name=col_p,
+                    line=dict(width=2, shape="spline"),
+                )
+            )
+
+        fig_p.update_layout(
+            xaxis=dict(
+                tickmode="array",
+                tickvals=horas_dia,
+                ticktext=[horas_format[h] for h in horas_dia],
+            ),
+            xaxis_title="Hora del Día",
+            yaxis_title="Presión (mca)",
+            template="plotly_white",
+        )
+        st.plotly_chart(fig_p, use_container_width=True)
     else:
         st.info(
-            f"No hay registros guardados aún para la fecha {fecha_actual}. Usa el botón 'Guardar / Registrar Hora en Histórico' para acumular la tendencia horaria."
+            "Registra al menos una hora en el histórico para visualizar las curvas de presión de la plantilla."
         )
 
+with tab_g4:
+    st.markdown("### 📅 Calendario Histórico de Operación")
+    if not df_hist_global.empty:
+        fechas_unicas = sorted(df_hist_global["Fecha"].unique())
+        fecha_calendario = st.selectbox(
+            "Seleccione la fecha a consultar en el histórico",
+            options=fechas_unicas,
+            index=len(fechas_unicas) - 1,
+        )
+
+        df_fecha_sel = df_hist_global[
+            df_hist_global["Fecha"] == fecha_calendario
+        ]
+        st.markdown(f"**Registros para la fecha: {fecha_calendario}**")
+        st.dataframe(df_fecha_sel, use_container_width=True)
+    else:
+        st.info("Aún no hay fechas registradas en el archivo histórico.")
+
 # ---------------------------------------------------------
-# 8. DETALLE DE TANQUES
+# 10. DETALLE DE TANQUES
 # ---------------------------------------------------------
 st.divider()
 st.subheader("📋 Estado Actual de Niveles por Tanque (cm)")
