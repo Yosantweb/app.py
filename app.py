@@ -133,8 +133,7 @@ meta_amanecer_pct = st.sidebar.number_input(
 st.sidebar.markdown("---")
 st.sidebar.subheader("📂 Cargar Plantilla de Consulta (.xls / .xlsx)")
 archivo_subido = st.sidebar.file_uploader(
-    "Sube tu archivo de consulta (Variables en filas, Horas en columnas)",
-    type=["xls", "xlsx", "csv"],
+    "Sube tu archivo de consulta", type=["xls", "xlsx", "csv"]
 )
 
 if archivo_subido is not None:
@@ -142,7 +141,16 @@ if archivo_subido is not None:
         if archivo_subido.name.endswith(".csv"):
             df_subido = pd.read_csv(archivo_subido)
         else:
-            df_subido = pd.read_excel(archivo_subido, sheet_name=0)
+            excel_file = pd.ExcelFile(archivo_subido)
+            # Buscar hoja principal (Hoja1 o la primera)
+            sheet_to_read = (
+                "Hoja1"
+                if "Hoja1" in excel_file.sheet_names
+                else excel_file.sheet_names[0]
+            )
+            df_subido = pd.read_excel(
+                archivo_subido, sheet_name=sheet_to_read
+            )
 
         st.sidebar.success(
             "✅ ¡Plantilla leída con éxito! Haz clic en sincronizar."
@@ -151,146 +159,314 @@ if archivo_subido is not None:
         if st.sidebar.button(
             "⚡ Sincronizar y Actualizar Datos al Histórico", type="primary"
         ):
-            col_var = df_subido.columns[0]
-            cols_horas = [c for c in df_subido.columns if c != col_var]
-
             df_hist = cargar_historico()
             registros_procesados = 0
 
-            for h_col in cols_horas:
-                h_str = str(h_col).lower()
-                h_num = None
-                for h_i in range(24):
-                    if (
-                        f"{h_i:02d}:00" in h_str
-                        or f"{h_i}:00" in h_str
-                        or f"{h_i}h" in h_str
-                    ):
-                        if (
-                            ("p. m." in h_str or "pm" in h_str)
-                            and h_i < 12
-                            and h_i != 0
-                        ):
-                            h_num = h_i + 12
-                        elif (
-                            ("a. m." in h_str or "am" in h_str)
-                            and h_i == 12
-                        ):
-                            h_num = 0
-                        else:
-                            h_num = h_i
-                        break
-
-                if h_num is None:
-                    continue
-
-                dict_raw = dict(
-                    zip(df_subido[col_var].astype(str).str.strip(), df_subido[h_col])
-                )
-
-                def limpiar_val(k, default=0.0):
-                    val = dict_raw.get(k, default)
+            # Detectar si el formato es tabular (DateTime en columnas) o transpuesto (Variables en col 0)
+            if "DateTime" in df_subido.columns or "Fecha" in df_subido.columns:
+                col_dt = "DateTime" if "DateTime" in df_subido.columns else "Fecha"
+                for idx, row in df_subido.iterrows():
+                    dt_val = row.get(col_dt, None)
+                    if pd.isna(dt_val) or str(dt_val).strip() in ["", "NaT", "nan"]:
+                        continue
                     try:
-                        if (
-                            pd.isna(val)
-                            or str(val).strip().lower() in ["null", "nan", "", "none"]
-                            or float(val) < 0
-                        ):
-                            return default
-                        return float(val)
+                        dt_parsed = pd.to_datetime(dt_val)
+                        h_num = dt_parsed.hour
+                        f_str = dt_parsed.strftime("%Y-%m-%d")
                     except:
+                        continue
+
+                    def get_col_val(col_names, default=0.0):
+                        for c in col_names:
+                            if c in df_subido.columns:
+                                v = row.get(c, default)
+                                try:
+                                    if (
+                                        pd.isna(v)
+                                        or str(v).strip().lower()
+                                        in ["null", "nan", "", "none"]
+                                        or float(v) < 0
+                                    ):
+                                        return default
+                                    return float(v)
+                                except:
+                                    pass
                         return default
 
-                t1 = limpiar_val("Nivel_Tk1_Planta", 134.0)
-                t2 = limpiar_val("Nivel_Tk2_Planta", 141.0)
-                suc = limpiar_val("Nivel_SuccionA_TkColinas", 162.0)
-                col2 = limpiar_val("Nivel_Colinas_Tk2", 281.0)
-                tn2 = limpiar_val("Nivel_TkNar2", 417.0)
-                lom = limpiar_val("Nivel_Tk_Lomas", 257.0)
-                car = limpiar_val("Nivel_Carmelo", 285.0)
+                    t1 = get_col_val(["Nivel_Tk1_Planta"], 134.0)
+                    t2 = get_col_val(["Nivel_Tk2_Planta"], 141.0)
+                    suc = get_col_val(["Nivel_SuccionA_TkColinas"], 162.0)
+                    col2 = get_col_val(["Nivel_Colinas_Tk2"], 281.0)
+                    tn2 = get_col_val(["Nivel_TkNar2"], 417.0)
+                    lom = get_col_val(["Nivel_Tk_Lomas"], 257.0)
+                    car = get_col_val(["Nivel_Carmelo"], 285.0)
 
-                alc_bosque = (
-                    min(1.0, col2 / 450.0) * FACTORES_BOSQUE["Nivel_Colinas_Tk2"]
-                    + min(1.0, car / 400.0) * FACTORES_BOSQUE["Nivel_Carmelo"]
-                    + min(1.0, t1 / 300.0) * FACTORES_BOSQUE["Nivel_Tk1_Planta"]
-                    + min(1.0, t2 / 300.0) * FACTORES_BOSQUE["Nivel_Tk2_Planta"]
-                    + min(1.0, tn2 / 500.0) * FACTORES_BOSQUE["Nivel_TkNar2"]
-                    + min(1.0, suc / 350.0) * FACTORES_BOSQUE["Nivel_SuccionA_TkColinas"]
-                    + min(1.0, lom / 400.0) * FACTORES_BOSQUE["Nivel_Tk_Lomas"]
-                ) * 100.0
-                vol_bosque = (alc_bosque / 100.0) * 50000.0
+                    alc_bosque = (
+                        min(1.0, col2 / 450.0)
+                        * FACTORES_BOSQUE["Nivel_Colinas_Tk2"]
+                        + min(1.0, car / 400.0)
+                        * FACTORES_BOSQUE["Nivel_Carmelo"]
+                        + min(1.0, t1 / 300.0)
+                        * FACTORES_BOSQUE["Nivel_Tk1_Planta"]
+                        + min(1.0, t2 / 300.0)
+                        * FACTORES_BOSQUE["Nivel_Tk2_Planta"]
+                        + min(1.0, tn2 / 500.0)
+                        * FACTORES_BOSQUE["Nivel_TkNar2"]
+                        + min(1.0, suc / 350.0)
+                        * FACTORES_BOSQUE["Nivel_SuccionA_TkColinas"]
+                        + min(1.0, lom / 400.0)
+                        * FACTORES_BOSQUE["Nivel_Tk_Lomas"]
+                    ) * 100.0
+                    vol_bosque = (alc_bosque / 100.0) * 50000.0
 
-                nivel_cerro_m = limpiar_val("EBAP_1_TP_LIT_001.PV", 3.9)
-                vol_cerro = min(
-                    VOLUMEN_MAX_CERRO_M3, nivel_cerro_m * AREA_CERRO_M2
-                )
-                pct_cerro = (vol_cerro / VOLUMEN_MAX_CERRO_M3) * 100.0
-
-                caudal_dist = limpiar_val("Caudal_Distribución", 13500.0)
-
-                reg_temp = {
-                    "Fecha": str(fecha_actual),
-                    "Hora": f"{h_num:02d}:00",
-                    "Produccion_Planta_m3d": produccion_planta_m3d,
-                    "Almacenamiento_Meta_06am_Pct": meta_amanecer_pct,
-                    "Caudal_Distribución": caudal_dist,
-                    "Almacenamiento_Bosque_Pct": round(alc_bosque, 1),
-                    "Volumen_Bosque_m3": round(vol_bosque, 1),
-                    "EBAP_1_TP_LIT_001.PV": nivel_cerro_m,
-                    "Nivel_Cerro_m": nivel_cerro_m,
-                    "Volumen_Cerro_m3": round(vol_cerro, 1),
-                    "Pct_Almacenamiento_Cerro": round(pct_cerro, 1),
-                    "EBAP_1_OO_PIT_001.PV": limpiar_val("EBAP_1_OO_PIT_001.PV", 5.4),
-                    "Presion_Ref_Red_Tk_Colinas": limpiar_val(
-                        "Presion_Ref_Red_Tk_Colinas", 0.0
-                    ),
-                    "Presion_Sector10_Elevado_Colinas": limpiar_val(
-                        "Presion_Sector10_Elevado_Colinas", 0.0
-                    ),
-                    "PresBomb_Znorte_a_TkPzuela": limpiar_val(
-                        "PresBomb_Znorte_a_TkPzuela", 0.0
-                    ),
-                    "Presion_Ent_ZonaNorte": limpiar_val(
-                        "Presion_Ent_ZonaNorte", 0.0
-                    ),
-                    "Presion_Pcanoas": limpiar_val("Presion_Pcanoas", 0.0),
-                    "Pres_Blezo": limpiar_val("Pres_Blezo", 0.0),
-                    "Presion_Chile": limpiar_val("Presion_Chile", 0.0),
-                    "Presion_Lomas": limpiar_val("Presion_Lomas", 0.0),
-                    "Presion_Consulado": limpiar_val("Presion_Consulado", 0.0),
-                    "Presion_Bgrande": limpiar_val("Presion_Bgrande", 0.0),
-                    "Presion_Bgrande_Kra7": limpiar_val(
-                        "Presion_Bgrande_Kra7", 0.0
-                    ),
-                    "Presion_Alcibia": limpiar_val("Presion_Alcibia", 0.0),
-                    "Presion_Piepopa": limpiar_val("Presion_Piepopa", 0.0),
-                    "Pres_Pic": limpiar_val("Pres_Pic", 0.0),
-                    "Presion_FPOPA": limpiar_val("Presion_FPOPA", 0.0),
-                    "Presion_Olaya_Cjust": limpiar_val(
-                        "Presion_Olaya_Cjust", 0.0
-                    ),
-                    "Presion_Fredonia": limpiar_val("Presion_Fredonia", 0.0),
-                    "Presion_Ref_Bombeo_LaVictoria": limpiar_val(
-                        "Presion_Ref_Bombeo_LaVictoria", 0.0
-                    ),
-                    "Presion_Mop": limpiar_val("Presion_Mop", 0.0),
-                    "Presion_Royalco": limpiar_val("Presion_Royalco", 0.0),
-                    "Presion_Bellavista_Agua_Potable": limpiar_val(
-                        "Presion_Bellavista_Agua_Potable", 0.0
-                    ),
-                    "Estado_Operativo": "Normal / Seguro",
-                }
-
-                df_hist = df_hist[
-                    ~(
-                        (df_hist["Fecha"] == str(fecha_actual))
-                        & (df_hist["Hora"] == f"{h_num:02d}:00")
+                    nivel_cerro_m = get_col_val(
+                        ["EBAP_1_TP_LIT_001.PV", "EBAP_1_TP_LIT_001"], 3.9
                     )
-                ]
-                df_hist = pd.concat(
-                    [df_hist, pd.DataFrame([reg_temp])], ignore_index=True
-                )
-                registros_procesados += 1
+                    vol_cerro = min(
+                        VOLUMEN_MAX_CERRO_M3, nivel_cerro_m * AREA_CERRO_M2
+                    )
+                    pct_cerro = (vol_cerro / VOLUMEN_MAX_CERRO_M3) * 100.0
+
+                    caudal_dist = get_col_val(
+                        ["Caudal_Distribución.1", "Caudal_Distribución"], 13500.0
+                    )
+
+                    reg_temp = {
+                        "Fecha": f_str,
+                        "Hora": f"{h_num:02d}:00",
+                        "Produccion_Planta_m3d": produccion_planta_m3d,
+                        "Almacenamiento_Meta_06am_Pct": meta_amanecer_pct,
+                        "Caudal_Distribución": caudal_dist,
+                        "Almacenamiento_Bosque_Pct": round(alc_bosque, 1),
+                        "Volumen_Bosque_m3": round(vol_bosque, 1),
+                        "EBAP_1_TP_LIT_001.PV": nivel_cerro_m,
+                        "Nivel_Cerro_m": nivel_cerro_m,
+                        "Volumen_Cerro_m3": round(vol_cerro, 1),
+                        "Pct_Almacenamiento_Cerro": round(pct_cerro, 1),
+                        "EBAP_1_OO_PIT_001.PV": get_col_val(
+                            ["EBAP_1_OO_PIT_001.PV"], 5.4
+                        ),
+                        "Presion_Ref_Red_Tk_Colinas": get_col_val(
+                            ["Presion_Ref_Red_Tk_Colinas"], 0.0
+                        ),
+                        "Presion_Sector10_Elevado_Colinas": get_col_val(
+                            ["Presion_Sector10_Elevado_Colinas"], 0.0
+                        ),
+                        "PresBomb_Znorte_a_TkPzuela": get_col_val(
+                            ["PresBomb_Znorte_a_TkPzuela"], 0.0
+                        ),
+                        "Presion_Ent_ZonaNorte": get_col_val(
+                            ["Presion_Ent_ZonaNorte"], 0.0
+                        ),
+                        "Presion_Pcanoas": get_col_val(
+                            ["Presion_Pcanoas"], 0.0
+                        ),
+                        "Pres_Blezo": get_col_val(["Pres_Blezo"], 0.0),
+                        "Presion_Chile": get_col_val(["Presion_Chile"], 0.0),
+                        "Presion_Lomas": get_col_val(["Presion_Lomas"], 0.0),
+                        "Presion_Consulado": get_col_val(
+                            ["Presion_Consulado"], 0.0
+                        ),
+                        "Presion_Bgrande": get_col_val(
+                            ["Presion_Bgrande"], 0.0
+                        ),
+                        "Presion_Bgrande_Kra7": get_col_val(
+                            ["Presion_Bgrande_Kra7"], 0.0
+                        ),
+                        "Presion_Alcibia": get_col_val(
+                            ["Presion_Alcibia"], 0.0
+                        ),
+                        "Presion_Piepopa": get_col_val(
+                            ["Presion_Piepopa"], 0.0
+                        ),
+                        "Pres_Pic": get_col_val(["Pres_Pic"], 0.0),
+                        "Presion_FPOPA": get_col_val(["Presion_FPOPA"], 0.0),
+                        "Presion_Olaya_Cjust": get_col_val(
+                            ["Presion_Olaya_Cjust"], 0.0
+                        ),
+                        "Presion_Fredonia": get_col_val(
+                            ["Presion_Fredonia"], 0.0
+                        ),
+                        "Presion_Ref_Bombeo_LaVictoria": get_col_val(
+                            ["Presion_Ref_Bombeo_LaVictoria"], 0.0
+                        ),
+                        "Presion_Mop": get_col_val(["Presion_Mop"], 0.0),
+                        "Presion_Royalco": get_col_val(
+                            ["Presion_Royalco"], 0.0
+                        ),
+                        "Presion_Bellavista_Agua_Potable": get_col_val(
+                            ["Presion_Bellavista_Agua_Potable"], 0.0
+                        ),
+                        "Estado_Operativo": "Normal / Seguro",
+                    }
+
+                    df_hist = df_hist[
+                        ~(
+                            (df_hist["Fecha"] == f_str)
+                            & (df_hist["Hora"] == f"{h_num:02d}:00")
+                        )
+                    ]
+                    df_hist = pd.concat(
+                        [df_hist, pd.DataFrame([reg_temp])], ignore_index=True
+                    )
+                    registros_procesados += 1
+            else:
+                # Formato transpuesto (Variables en col 0)
+                col_var = df_subido.columns[0]
+                cols_horas = [c for c in df_subido.columns if c != col_var]
+                for h_col in cols_horas:
+                    h_str = str(h_col).lower()
+                    h_num = None
+                    for h_i in range(24):
+                        if (
+                            f"{h_i:02d}:00" in h_str
+                            or f"{h_i}:00" in h_str
+                            or f"{h_i}h" in h_str
+                        ):
+                            if (
+                                ("p. m." in h_str or "pm" in h_str)
+                                and h_i < 12
+                                and h_i != 0
+                            ):
+                                h_num = h_i + 12
+                            elif (
+                                ("a. m." in h_str or "am" in h_str)
+                                and h_i == 12
+                            ):
+                                h_num = 0
+                            else:
+                                h_num = h_i
+                            break
+                    if h_num is None:
+                        continue
+                    dict_raw = dict(
+                        zip(
+                            df_subido[col_var].astype(str).str.strip(),
+                            df_subido[h_col],
+                        )
+                    )
+
+                    def limpiar_val(k, default=0.0):
+                        val = dict_raw.get(k, default)
+                        try:
+                            if (
+                                pd.isna(val)
+                                or str(val).strip().lower()
+                                in ["null", "nan", "", "none"]
+                                or float(val) < 0
+                            ):
+                                return default
+                            return float(val)
+                        except:
+                            return default
+
+                    t1 = limpiar_val("Nivel_Tk1_Planta", 134.0)
+                    t2 = limpiar_val("Nivel_Tk2_Planta", 141.0)
+                    suc = limpiar_val("Nivel_SuccionA_TkColinas", 162.0)
+                    col2 = limpiar_val("Nivel_Colinas_Tk2", 281.0)
+                    tn2 = limpiar_val("Nivel_TkNar2", 417.0)
+                    lom = limpiar_val("Nivel_Tk_Lomas", 257.0)
+                    car = limpiar_val("Nivel_Carmelo", 285.0)
+
+                    alc_bosque = (
+                        min(1.0, col2 / 450.0)
+                        * FACTORES_BOSQUE["Nivel_Colinas_Tk2"]
+                        + min(1.0, car / 400.0)
+                        * FACTORES_BOSQUE["Nivel_Carmelo"]
+                        + min(1.0, t1 / 300.0)
+                        * FACTORES_BOSQUE["Nivel_Tk1_Planta"]
+                        + min(1.0, t2 / 300.0)
+                        * FACTORES_BOSQUE["Nivel_Tk2_Planta"]
+                        + min(1.0, tn2 / 500.0)
+                        * FACTORES_BOSQUE["Nivel_TkNar2"]
+                        + min(1.0, suc / 350.0)
+                        * FACTORES_BOSQUE["Nivel_SuccionA_TkColinas"]
+                        + min(1.0, lom / 400.0)
+                        * FACTORES_BOSQUE["Nivel_Tk_Lomas"]
+                    ) * 100.0
+                    vol_bosque = (alc_bosque / 100.0) * 50000.0
+
+                    nivel_cerro_m = limpiar_val("EBAP_1_TP_LIT_001.PV", 3.9)
+                    vol_cerro = min(
+                        VOLUMEN_MAX_CERRO_M3, nivel_cerro_m * AREA_CERRO_M2
+                    )
+                    pct_cerro = (vol_cerro / VOLUMEN_MAX_CERRO_M3) * 100.0
+                    caudal_dist = limpiar_val("Caudal_Distribución", 13500.0)
+
+                    reg_temp = {
+                        "Fecha": str(fecha_actual),
+                        "Hora": f"{h_num:02d}:00",
+                        "Produccion_Planta_m3d": produccion_planta_m3d,
+                        "Almacenamiento_Meta_06am_Pct": meta_amanecer_pct,
+                        "Caudal_Distribución": caudal_dist,
+                        "Almacenamiento_Bosque_Pct": round(alc_bosque, 1),
+                        "Volumen_Bosque_m3": round(vol_bosque, 1),
+                        "EBAP_1_TP_LIT_001.PV": nivel_cerro_m,
+                        "Nivel_Cerro_m": nivel_cerro_m,
+                        "Volumen_Cerro_m3": round(vol_cerro, 1),
+                        "Pct_Almacenamiento_Cerro": round(pct_cerro, 1),
+                        "EBAP_1_OO_PIT_001.PV": limpiar_val(
+                            "EBAP_1_OO_PIT_001.PV", 5.4
+                        ),
+                        "Presion_Ref_Red_Tk_Colinas": limpiar_val(
+                            "Presion_Ref_Red_Tk_Colinas", 0.0
+                        ),
+                        "Presion_Sector10_Elevado_Colinas": limpiar_val(
+                            "Presion_Sector10_Elevado_Colinas", 0.0
+                        ),
+                        "PresBomb_Znorte_a_TkPzuela": limpiar_val(
+                            "PresBomb_Znorte_a_TkPzuela", 0.0
+                        ),
+                        "Presion_Ent_ZonaNorte": limpiar_val(
+                            "Presion_Ent_ZonaNorte", 0.0
+                        ),
+                        "Presion_Pcanoas": limpiar_val("Presion_Pcanoas", 0.0),
+                        "Pres_Blezo": limpiar_val("Pres_Blezo", 0.0),
+                        "Presion_Chile": limpiar_val("Presion_Chile", 0.0),
+                        "Presion_Lomas": limpiar_val("Presion_Lomas", 0.0),
+                        "Presion_Consulado": limpiar_val(
+                            "Presion_Consulado", 0.0
+                        ),
+                        "Presion_Bgrande": limpiar_val("Presion_Bgrande", 0.0),
+                        "Presion_Bgrande_Kra7": limpiar_val(
+                            "Presion_Bgrande_Kra7", 0.0
+                        ),
+                        "Presion_Alcibia": limpiar_val(
+                            "Presion_Alcibia", 0.0
+                        ),
+                        "Presion_Piepopa": limpiar_val(
+                            "Presion_Piepopa", 0.0
+                        ),
+                        "Pres_Pic": limpiar_val("Pres_Pic", 0.0),
+                        "Presion_FPOPA": limpiar_val("Presion_FPOPA", 0.0),
+                        "Presion_Olaya_Cjust": limpiar_val(
+                            "Presion_Olaya_Cjust", 0.0
+                        ),
+                        "Presion_Fredonia": limpiar_val(
+                            "Presion_Fredonia", 0.0
+                        ),
+                        "Presion_Ref_Bombeo_LaVictoria": limpiar_val(
+                            "Presion_Ref_Bombeo_LaVictoria", 0.0
+                        ),
+                        "Presion_Mop": limpiar_val("Presion_Mop", 0.0),
+                        "Presion_Royalco": limpiar_val(
+                            "Presion_Royalco", 0.0
+                        ),
+                        "Presion_Bellavista_Agua_Potable": limpiar_val(
+                            "Presion_Bellavista_Agua_Potable", 0.0
+                        ),
+                        "Estado_Operativo": "Normal / Seguro",
+                    }
+                    df_hist = df_hist[
+                        ~(
+                            (df_hist["Fecha"] == str(fecha_actual))
+                            & (df_hist["Hora"] == f"{h_num:02d}:00")
+                        )
+                    ]
+                    df_hist = pd.concat(
+                        [df_hist, pd.DataFrame([reg_temp])], ignore_index=True
+                    )
+                    registros_procesados += 1
 
             df_hist.to_csv(HISTORICO_FILE, index=False)
             st.sidebar.success(
@@ -468,7 +644,6 @@ tab1, tab2, tab3, tab4 = st.tabs([
 
 with tab1:
     fig_s = go.Figure()
-    # 1. Curva Meta Teórica
     fig_s.add_trace(
         go.Scatter(
             x=df_curva_base["Hora"],
@@ -480,7 +655,6 @@ with tab1:
     )
 
     if not df_dia_actual.empty:
-        # 2. Curva Real Acumulada
         fig_s.add_trace(
             go.Scatter(
                 x=df_dia_ord["Hora_Int"],
@@ -492,7 +666,6 @@ with tab1:
             )
         )
 
-        # 3. Curva Proyección Resto del Día
         ultima_h = df_dia_ord["Hora_Int"].max()
         if ultima_h < 23:
             horas_p = list(range(int(ultima_h), 24))
@@ -535,7 +708,6 @@ with tab1:
 
 with tab2:
     fig_c = go.Figure()
-    # 1. Banda Permitida (Máx - Mín)
     fig_c.add_trace(
         go.Scatter(
             x=horas_dia + horas_dia[::-1],
@@ -547,7 +719,6 @@ with tab2:
             name="Banda Permitida (Máx - Mín)",
         )
     )
-    # 2. Caudal Objetivo (Meta)
     fig_c.add_trace(
         go.Scatter(
             x=df_curva_base["Hora"],
@@ -559,7 +730,6 @@ with tab2:
     )
 
     if not df_dia_actual.empty:
-        # 3. Caudal Real Transcurrido
         fig_c.add_trace(
             go.Scatter(
                 x=df_dia_ord["Hora_Int"],
@@ -571,7 +741,6 @@ with tab2:
             )
         )
 
-        # 4. Proyección Caudal Resto del Día
         ultima_h = df_dia_ord["Hora_Int"].max()
         if ultima_h < 23:
             horas_p = list(range(int(ultima_h), 24))
