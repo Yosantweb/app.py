@@ -799,4 +799,65 @@ with tab3:
                 y=df_dia_ord["Pct_Almacenamiento_Cerro"],
                 mode="lines+markers",
                 name="% Almacenamiento Cerro (Real)",
-                line=dict
+                line=dict(color="#8e44ad", width=3, shape="spline"),
+            )
+        )
+        fig_cerro.add_trace(
+            go.Scatter(
+                x=df_dia_ord["Hora_Int"],
+                y=df_dia_ord["Nivel_Cerro_m"],
+                mode="lines+markers",
+                name="Nivel Planta Cerro (m)",
+                yaxis="y2",
+                line=dict(color="#2980b9", width=2, dash="dash", shape="spline"),
+            )
+        )
+        fig_cerro.update_layout(
+            xaxis=dict(
+                tickmode="array",
+                tickvals=horas_dia,
+                ticktext=[horas_format[h] for h in horas_dia],
+            ),
+            xaxis_title="Hora del Día",
+            yaxis=dict(title="Almacenamiento Cerro (%)", range=[0, 100]),
+            yaxis2=dict(
+                title="Nivel (m)", overlaying="y", side="right", range=[0, 5.0]
+            ),
+            template="plotly_white",
+            legend=dict(x=0.01, y=0.99),
+            margin=dict(t=40),
+        )
+        st.plotly_chart(fig_cerro, use_container_width=True)
+    else:
+        st.info("Carga tu plantilla para visualizar las curvas de Planta El Cerro.")
+
+with tab4:
+    st.markdown("### 🗜️ Consulta de Presiones (Últimas 6 Horas)")
+    if not df_dia_actual.empty:
+        df_ultimas_6 = df_dia_ord.tail(6)
+        cols_presiones = [
+            c
+            for c in df_ultimas_6.columns
+            if "Pres" in c or "EBAP" in c or "Presión" in c
+        ]
+        df_presiones_transp = df_ultimas_6[["Hora"] + cols_presiones].set_index("Hora").T
+        st.dataframe(df_presiones_transp, use_container_width=True)
+    else:
+        st.info("Carga tu plantilla para consultar las presiones sectorizadas.")
+
+# ---------------------------------------------------------
+# 9. CALENDARIO HISTÓRICO DE CONSULTA
+# ---------------------------------------------------------
+st.divider()
+st.subheader("📅 Auditoría y Consulta Histórica por Calendario")
+if not df_hist_global.empty:
+    fechas_unicas = sorted(df_hist_global["Fecha"].unique())
+    fecha_sel = st.selectbox(
+        "Seleccione la fecha histórica a consultar",
+        options=fechas_unicas,
+        index=len(fechas_unicas) - 1,
+    )
+    df_f_sel = df_hist_global[df_hist_global["Fecha"] == fecha_sel]
+    st.dataframe(df_f_sel, use_container_width=True)
+else:
+    st.info("Aún no hay registros en el archivo histórico.")
