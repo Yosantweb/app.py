@@ -142,7 +142,6 @@ if archivo_subido is not None:
             df_subido = pd.read_csv(archivo_subido)
         else:
             excel_file = pd.ExcelFile(archivo_subido)
-            # Buscar hoja principal (Hoja1 o la primera)
             sheet_to_read = (
                 "Hoja1"
                 if "Hoja1" in excel_file.sheet_names
@@ -162,7 +161,6 @@ if archivo_subido is not None:
             df_hist = cargar_historico()
             registros_procesados = 0
 
-            # Detectar si el formato es tabular (DateTime en columnas) o transpuesto (Variables en col 0)
             if "DateTime" in df_subido.columns or "Fecha" in df_subido.columns:
                 col_dt = "DateTime" if "DateTime" in df_subido.columns else "Fecha"
                 for idx, row in df_subido.iterrows():
@@ -311,7 +309,6 @@ if archivo_subido is not None:
                     )
                     registros_procesados += 1
             else:
-                # Formato transpuesto (Variables en col 0)
                 col_var = df_subido.columns[0]
                 cols_horas = [c for c in df_subido.columns if c != col_var]
                 for h_col in cols_horas:
@@ -630,7 +627,7 @@ with kpi4:
     )
 
 # ---------------------------------------------------------
-# 8. DASHBOARDS GRÁFICOS INTERACTIVOS CON COMPARATIVA REAL VS META
+# 8. DASHBOARDS GRÁFICOS INTERACTIVOS (ETIQUETAS NO SOLAPADAS)
 # ---------------------------------------------------------
 st.divider()
 st.subheader("📈 Dashboard Gráfico: Tendencias Suavizadas y Proyecciones")
@@ -691,8 +688,19 @@ with tab1:
         y=meta_amanecer_pct,
         line_dash="dot",
         line_color="red",
-        annotation_text=f"Meta Amanecer {meta_amanecer_pct}%",
     )
+    # Etiqueta de la meta reubicada en la esquina superior izquierda sin solaparse
+    fig_s.add_annotation(
+        x=0.01,
+        y=meta_amanecer_pct + 3.0,
+        xref="paper",
+        yref="y",
+        text=f"<b>Meta Amanecer {meta_amanecer_pct}%</b>",
+        showarrow=False,
+        font=dict(color="red", size=12),
+        align="left",
+    )
+
     fig_s.update_layout(
         xaxis=dict(
             tickmode="array",
@@ -703,6 +711,7 @@ with tab1:
         yaxis_title="Almacenamiento PTAP Bosque (%)",
         template="plotly_white",
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+        margin=dict(t=40),
     )
     st.plotly_chart(fig_s, use_container_width=True)
 
@@ -775,6 +784,7 @@ with tab2:
         yaxis_title="Caudal Distribución (m³/h)",
         template="plotly_white",
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+        margin=dict(t=40),
     )
     st.plotly_chart(fig_c, use_container_width=True)
 
@@ -816,6 +826,7 @@ with tab3:
             ),
             template="plotly_white",
             legend=dict(x=0.01, y=0.99),
+            margin=dict(t=40),
         )
         st.plotly_chart(fig_cerro, use_container_width=True)
     else:
